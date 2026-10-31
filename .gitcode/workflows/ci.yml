@@ -25,6 +25,25 @@ jobs:
       - name: pub get
         run: dart pub get
 
+      # bash 解析 $VAR 时会把紧跟的非 ASCII 字节算进变量名：中文串里写 "$VAR（"
+      # 在 set -u 下直接 unbound variable。这条已经被踩过两次，用检查兜住。
+      - name: shell 变量引用
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          pat = re.compile(r'\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]')
+          bad = []
+          for p in pathlib.Path('.').rglob('*.sh'):
+              for i, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                  if pat.search(line) and not line.lstrip().startswith('#'):
+                      bad.append('%s:%d: %s' % (p, i, line.strip()))
+          if bad:
+              print('变量名后紧跟非 ASCII 字符，bash 会把它算进变量名，改成 ${VAR}：')
+              print('\n'.join(bad))
+              sys.exit(1)
+          print('ok')
+          PY
+
       - name: format
         run: dart format --output=none --set-exit-if-changed lib test example tool
 

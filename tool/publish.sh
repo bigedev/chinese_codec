@@ -49,9 +49,9 @@ if [ -n "$PUB_PROXY" ]; then
     export HTTPS_PROXY="$PUB_PROXY"
     export ALL_PROXY="$PUB_SOCKS_PROXY"
     export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
-    echo "== 走代理 $PUB_PROXY（socks $PUB_SOCKS_PROXY）=="
+    echo "== 走代理 ${PUB_PROXY}（socks ${PUB_SOCKS_PROXY}）=="
   else
-    echo "== $PUB_PROXY 连不上，直接直连 =="
+    echo "== ${PUB_PROXY} 连不上，直接直连 =="
   fi
 fi
 
