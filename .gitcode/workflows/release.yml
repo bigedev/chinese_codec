@@ -1,0 +1,54 @@
+name: release-check
+
+# 推 x.y.z 形式的 tag（本仓库 tag 不带 v 前缀，例如 0.1.0）时做发布前检查，**不发布**。
+# 发布统一在本机跑 tool/publish.sh。
+#
+# 为什么不在 CI 里发：pub.dev 只给 GitHub Actions 提供 OIDC 免密发布，AtomGit 拿不到；
+# 唯一可行的是把 pub-credentials.json（含 refreshToken，等于账号的长期通行证）base64 后
+# 塞进仓库 Secret。公开仓为此长期保存一份账号凭证，风险大于收益。
+#
+# AtomGit Action 只认 .gitcode/workflows/ 这个目录，放在 .github/workflows/ 下不会触发。
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  check:
+    name: tag / test / dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 纯 Dart 包，借 flutter-action 装一套稳定工具链，和 ci.yml 保持一致。
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: pub get
+        run: dart pub get
+
+      # tag 与 pubspec 的 version 必须一致：不一致时 pub.dev 会以「版本已存在」为由拒绝，
+      # 错误信息还容易误读成凭据问题，所以先自己拦一道。取不到 tag 名（平台变量差异）时
+      # 只警告、不阻断，否则这条检查自己会把流程堵死。
+      - name: version matches tag
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1)"
+          tag="${GITHUB_REF_NAME:-${GITHUB_REF##*/}}"
+          tag="${tag#v}"
+          if [ -z "${tag}" ]; then
+            echo "取不到 tag 名，跳过一致性检查（pubspec version: ${version}）"
+            exit 0
+          fi
+          if [ "${version}" != "${tag}" ]; then
+            echo "tag '${tag}' 与 pubspec version '${version}' 不一致"
+            exit 1
+          fi
+          echo "tag 与 version 一致：${version}"
+
+      - name: test
+        run: dart test
+
+      - name: dry run
+        run: dart pub publish --dry-run
