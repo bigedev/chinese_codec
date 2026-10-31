@@ -8,14 +8,16 @@
 #   1. 本机 ~/.zshrc 里设了 PUB_HOSTED_URL=https://pub.flutter-io.cn（国内镜像）。
 #      镜像只读、不代理发布，直接照着发会以「requested authentication」失败。
 #      所以 publish 这两步单独把 PUB_HOSTED_URL 覆盖成 pub.dev；依赖解析不受影响。
-#   2. 默认走本地 7890（Clash 默认端口）。连不上就自动直连，不会因为代理没开
-#      而把发布卡死。要换端口 PUB_PROXY=http://127.0.0.1:1087；强制直连用 PUB_PROXY=。
+#   2. 默认走本地 7897（Clash Verge 的 mixed 端口，http 与 socks5 同一个口）。
+#      连不上就自动直连，不会因为代理没开而把发布卡死。换端口 PUB_PROXY=... 与
+#      PUB_SOCKS_PROXY=...；强制直连用 PUB_PROXY=。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 DART_BIN="${DART_BIN:-dart}"
-PUB_PROXY="${PUB_PROXY-http://127.0.0.1:7890}"
+PUB_PROXY="${PUB_PROXY-http://127.0.0.1:7897}"
+PUB_SOCKS_PROXY="${PUB_SOCKS_PROXY-socks5://127.0.0.1:7897}"
 PUB_PUBLISH_URL="${PUB_PUBLISH_URL:-https://pub.dev}"
 CREDENTIALS="$HOME/.config/dart/pub-credentials.json"
 
@@ -40,13 +42,14 @@ if [ -n "$(git status --porcelain)" ]; then
   git status --short
 fi
 
-# ---------- 代理（默认 7890，连不上就直连） ----------
+# ---------- 代理（默认 7897，连不上就直连） ----------
 if [ -n "$PUB_PROXY" ]; then
   if curl -s -m 2 -o /dev/null "$PUB_PROXY" 2>/dev/null; then
     export HTTP_PROXY="$PUB_PROXY"
     export HTTPS_PROXY="$PUB_PROXY"
+    export ALL_PROXY="$PUB_SOCKS_PROXY"
     export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
-    echo "== 走代理 $PUB_PROXY =="
+    echo "== 走代理 $PUB_PROXY（socks $PUB_SOCKS_PROXY）=="
   else
     echo "== $PUB_PROXY 连不上，直接直连 =="
   fi
