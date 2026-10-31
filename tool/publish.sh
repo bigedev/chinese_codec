@@ -63,7 +63,13 @@ echo '== test =='
 "$DART_BIN" test
 
 echo '== dry run =='
-PUB_HOSTED_URL="$PUB_PUBLISH_URL" "$DART_BIN" pub publish --dry-run
+# dry-run 把 warning 也算失败（退出码 1），工作区有未提交改动就会中招。
+# 直接让 set -e 掐掉的话，看起来像「发布完了」却什么都没发生，所以这里自己接住。
+if ! PUB_HOSTED_URL="$PUB_PUBLISH_URL" "$DART_BIN" pub publish --dry-run; then
+  echo
+  echo 'dry-run 没通过：上面的问题先处理掉再发（工作区有未提交改动也会被算成 warning）。'
+  exit 1
+fi
 
 if [ "${1:-}" = '--dry-run' ]; then
   echo '只做了检查，没有发布'
@@ -72,8 +78,8 @@ fi
 
 # ---------- 发布 ----------
 if [ ! -f "$CREDENTIALS" ]; then
-  echo "还没登录 pub.dev（找不到 $CREDENTIALS）。先执行："
-  echo "  PUB_HOSTED_URL=$PUB_PUBLISH_URL $DART_BIN pub login"
+  echo "还没登录 pub.dev（找不到 ${CREDENTIALS}）。先执行："
+  echo "  PUB_HOSTED_URL=${PUB_PUBLISH_URL} ${DART_BIN} pub login"
   exit 1
 fi
 
