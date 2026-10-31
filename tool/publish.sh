@@ -19,7 +19,21 @@ DART_BIN="${DART_BIN:-dart}"
 PUB_PROXY="${PUB_PROXY-http://127.0.0.1:7897}"
 PUB_SOCKS_PROXY="${PUB_SOCKS_PROXY-socks5://127.0.0.1:7897}"
 PUB_PUBLISH_URL="${PUB_PUBLISH_URL:-https://pub.dev}"
-CREDENTIALS="$HOME/.config/dart/pub-credentials.json"
+
+# pub 的凭据位置随平台/版本不同：macOS 上是 ~/Library/Application Support/dart，
+# Linux 与老版本在 $XDG_CONFIG_HOME/dart 或 ~/.config/dart。写死任何一个都会误判成
+# 「没登录」，所以按候选顺序探测，也可以用 PUB_CREDENTIALS 直接指定。
+CREDENTIALS="${PUB_CREDENTIALS:-}"
+if [ -z "$CREDENTIALS" ]; then
+  for candidate in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/dart/pub-credentials.json" \
+    "$HOME/Library/Application Support/dart/pub-credentials.json"; do
+    if [ -f "$candidate" ]; then
+      CREDENTIALS="$candidate"
+      break
+    fi
+  done
+fi
 
 # ---------- 版本一致性 ----------
 VERSION="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1)"
@@ -80,11 +94,12 @@ if [ "${1:-}" = '--dry-run' ]; then
 fi
 
 # ---------- 发布 ----------
-if [ ! -f "$CREDENTIALS" ]; then
-  echo "还没登录 pub.dev（找不到 ${CREDENTIALS}）。先执行："
+if [ -z "$CREDENTIALS" ]; then
+  echo '还没登录 pub.dev（没找到 pub-credentials.json）。先执行：'
   echo "  PUB_HOSTED_URL=${PUB_PUBLISH_URL} ${DART_BIN} pub login"
   exit 1
 fi
+echo "== 凭据 ${CREDENTIALS} =="
 
 echo
 echo "即将发布 ${VERSION} 到 ${PUB_PUBLISH_URL}（Ctrl-C 取消）"
