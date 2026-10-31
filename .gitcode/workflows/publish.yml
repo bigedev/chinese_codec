@@ -1,0 +1,63 @@
+name: publish
+
+# 推 x.y.z 形式的 tag 时发到 pub.dev（本仓库的 tag 不带 v 前缀，例如 0.1.0）。
+#
+# 前置：
+#   1. 本机 dart pub login 一次，得到 ~/.config/dart/pub-credentials.json
+#   2. base64 之后存进仓库 Secret：PUB_DEV_CREDENTIALS
+#      macOS: base64 -i ~/.config/dart/pub-credentials.json
+#      Linux: base64 -w0 ~/.config/dart/pub-credentials.json
+#   3. pub.dev 上完成 publisher 验证（第一次发布必须人工做，CI 代替不了）
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  publish:
+    name: publish to pub.dev
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: pub get
+        run: dart pub get
+
+      # tag 与 pubspec 的 version 必须一致，否则 pub 会以「版本已存在」为由拒绝，
+      # 错误信息还容易误读成凭据问题，所以先自己拦一道。取不到 tag 名（平台变量
+      # 差异）时只警告、不阻断，否则这条检查自己会把发布堵死。
+      - name: version matches tag
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1)"
+          tag="${GITHUB_REF_NAME:-${GITHUB_REF##*/}}"
+          tag="${tag#v}"
+          if [ -z "$tag" ]; then
+            echo "取不到 tag 名，跳过一致性检查（pubspec version: $version）"
+            exit 0
+          fi
+          if [ "$version" != "$tag" ]; then
+            echo "tag '$tag' 与 pubspec version '$version' 不一致"
+            exit 1
+          fi
+
+      - name: dry run
+        run: dart pub publish --dry-run
+
+      - name: restore pub.dev credentials
+        run: |
+          mkdir -p "$HOME/.config/dart"
+          if [ -n "${{ secrets.PUB_DEV_CREDENTIALS }}" ]; then
+            echo "${{ secrets.PUB_DEV_CREDENTIALS }}" | base64 --decode \
+              > "$HOME/.config/dart/pub-credentials.json"
+          else
+            echo "缺少 Secret PUB_DEV_CREDENTIALS"
+            exit 1
+          fi
+
+      - name: publish
+        run: dart pub publish --force
