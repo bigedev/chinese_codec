@@ -1,0 +1,20 @@
+name: chinese_codec
+description: 中文字符集编解码的纯 Dart 实现：GB18030（含四字节与补充平面）、GBK、GB2312、Big5(CP950)、Big5-HKSCS，无原生依赖，服务端、CLI、Flutter 都能用。
+version: 0.1.0
+repository: https://atomgit.com/eltoro/bige-editor
+issue_tracker: https://atomgit.com/eltoro/bige-editor/issues
+
+topics:
+  - encoding
+  - charset
+  - chinese
+  - gbk
+  - gb18030
+  - big5
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0

@@ -1,0 +1,6 @@
+.dart_tool/
+pubspec.lock
+build/
+
+# 生成脚本抓的上游映射表，缺了会重新下载（见 tool/gen_tables.py），不入库
+tool/.cache/
