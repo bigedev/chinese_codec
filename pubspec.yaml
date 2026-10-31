@@ -1,5 +1,5 @@
 name: chinese_codec
-description: Pure Dart codecs for Chinese charsets: GB18030 (incl. 4-byte and supplementary planes), GBK, GB2312, Big5 (CP950) and Big5-HKSCS. No native dependencies.
+description: "Pure Dart codecs for Chinese charsets: GB18030 (incl. 4-byte and supplementary planes), GBK, GB2312, Big5 (CP950) and Big5-HKSCS. No native dependencies."
 version: 0.1.0
 repository: https://atomgit.com/eltoro/chinese_codec
 issue_tracker: https://atomgit.com/eltoro/chinese_codec/issues
