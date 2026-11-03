@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'double_byte_codec.dart' show decodeWholeStream;
 import 'gb_layout.dart';
 import 'tables.dart';
 
@@ -21,25 +23,49 @@ import 'tables.dart';
 /// 四字节序列标成忽略，老文件里它们会解不出来；本包按国标做完整互换，它们仍解成
 /// 原来的 PUA 码位，往返也保得住。
 class Gb18030Codec extends Encoding {
+  /// 创建一个 GB18030 编解码实例。
+  ///
+  /// [allowInvalid] 决定解码时坏字节怎么处理，详见同名字段。
   const Gb18030Codec({this.allowInvalid = false});
 
   /// 遇到解不出来的字节时：true 换成 U+FFFD 继续，false 抛 [FormatException]。
+  ///
+  /// 和 `utf8.decode(allowMalformed:)` 同义。默认严格 —— 拿不准的时候宁可报错，
+  /// 也不要把一堆替换字符写回文件。
+  ///
+  /// 只作用于解码；编码方向编不出来的字符总是抛 [FormatException]。
   final bool allowInvalid;
 
+  /// 编码名，固定为 `'gb18030'`。
+  ///
+  /// 与 `toString()` 的返回值一致，也是下面 [gb18030] 实例在 `chineseCodecs` 里的名字。
   @override
   String get name => 'gb18030';
 
+  /// 编码器：双字节区能表示的写两字节，其余走四字节；编不出来的字符抛
+  /// [FormatException]。
   @override
   Converter<String, List<int>> get encoder => const _Gb18030Encoder();
 
+  /// 解码器：按第二个字节区分双字节与四字节形式，坏字节按 [allowInvalid]
+  /// 抛 [FormatException] 或换成 U+FFFD。
   @override
   Converter<List<int>, String> get decoder => _Gb18030Decoder(this);
 
+  /// 把整个字节流读完再解码，结果等同 `decode(整段字节)`。
+  ///
+  /// 不是增量解码，好处是多字节字符被切在两个 chunk 之间也不受影响。
+  /// 内部实现见 [decodeWholeStream]。
+  @override
+  Future<String> decodeStream(Stream<List<int>> byteStream) =>
+      decodeWholeStream(this, byteStream);
+
+  /// 返回编码名，与 [name] 相同（`gb18030`）。
   @override
   String toString() => name;
 }
 
-/// GB18030 的共享实例。
+/// GB18030 的共享实例（严格模式，坏字节抛 [FormatException]）。
 const Gb18030Codec gb18030 = Gb18030Codec();
 
 class _Gb18030Decoder extends Converter<List<int>, String> {

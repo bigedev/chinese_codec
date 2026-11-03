@@ -38,6 +38,8 @@ export 'src/gbk.dart' show GbkCodec, gbk;
 
 /// 本包提供的五种编码：GB18030 / GBK / GB2312 是简体（由宽到窄），
 /// Big5 / Big5-HKSCS 是繁体（后者是香港增补字符集，格子更多但与 CP950 有冲突）。
+///
+/// 顺序固定：简体三家在前（由宽到窄）、繁体两家在后；全部是严格模式的共享实例。
 const List<Encoding> chineseCodecs = <Encoding>[
   gb18030,
   gbk,
@@ -48,11 +50,18 @@ const List<Encoding> chineseCodecs = <Encoding>[
 
 /// 按名字取编码，认常见别名；不认识返回 null。
 ///
+/// 大小写不敏感。返回的是本包的共享实例，所以可以直接比较身份
+/// （`identical(chineseEncodingByName('CP936'), gbk)` 成立）。
+///
+/// `dart:convert` 的 `Encoding.getByName` 只认 utf-8 / latin1 / ascii，
+/// 中文编码走这个函数。
+///
 /// ```dart
 /// chineseEncodingByName('CP936');      // → gbk
 /// chineseEncodingByName('GB_2312');   // → gb2312
 /// chineseEncodingByName('CP950');     // → big5
 /// chineseEncodingByName('big5-hkscs');// → big5hkscs
+/// chineseEncodingByName('shift_jis'); // → null（不认识的编码）
 /// ```
 Encoding? chineseEncodingByName(String name) => switch (name.toLowerCase()) {
       'gbk' || 'cp936' || 'ms936' || 'windows-936' => gbk,

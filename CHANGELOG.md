@@ -1,3 +1,13 @@
+## 0.1.1
+
+- 补齐 pub.dev 的 API 文档：五个编解码类的构造函数与 `name` / `layout` / `encoder` /
+  `decoder` / `decodeStream` / `toString` 都写清了取值与行为，不再只有签名。
+  同时点明 `allowInvalid` **只影响解码** —— 编码方向编不出来的字符一律抛
+  `FormatException`。
+- 修复 `decodeStream`：`Converter` 没有实现分块转换，`dart:convert` 的默认实现一调用
+  就抛 `UnsupportedError`。现在先把字节流读完再解码，多字节字符被切在两个 chunk 之间
+  也能正常解。
+
 ## 0.1.0
 
 - 首个版本：GB18030（1 / 2 / 4 字节，含补充平面线性区）、GBK、GB2312、Big5（CP950）、

@@ -32,16 +32,23 @@ final Map<int, int> big5ReverseMap = _buildReverseMap();
 /// 香港的 Big5-HKSCS 在 [Big5HkscsCodec]：它与 CP950 不是包含关系，250 格映射不同，
 /// 读 HKSCS 文件要用那一个。
 class Big5Codec extends DoubleByteCodec {
+  /// 创建一个 Big5（CP950）编解码实例。
+  ///
+  /// [allowInvalid] 决定解码时坏字节怎么处理，详见同名字段。
   const Big5Codec({super.allowInvalid});
 
+  /// 编码名，固定为 `'big5'`。
+  ///
+  /// 与 `toString()` 的返回值一致，也是下面 [big5] 实例在 `chineseCodecs` 里的名字。
   @override
   String get name => 'big5';
 
+  /// Big5（CP950）的字节映射表：首字节 0xA1-0xF9（89 个）× 157 个第二字节。
   @override
   DoubleByteLayout get layout => big5Layout;
 }
 
-/// Big5 的共享实例。
+/// Big5 的共享实例（严格模式，坏字节抛 [FormatException]）。
 const Big5Codec big5 = Big5Codec();
 
 /// Big5 的字节映射表。

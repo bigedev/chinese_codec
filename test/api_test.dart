@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:chinese_codec/chinese_codec.dart';
@@ -48,5 +49,30 @@ void main() {
     expect(gbk.encode(line), gbkBytes);
     expect(gb18030.decode(gbkBytes), line);
     expect(gb2312.decode(gbkBytes), line);
+  });
+
+  test('decodeStream 跨 chunk 切断多字节字符也能解', () async {
+    const String text = '中文';
+    final List<int> gbkBytes = gbk.encode(text);
+    // 故意按 1 / 2 / 剩余 切开，让汉字的两字节分属不同 chunk
+    Stream<List<int>> split(List<int> bytes) => Stream<List<int>>.fromIterable(
+          <List<int>>[
+            bytes.sublist(0, 1),
+            bytes.sublist(1, 3),
+            bytes.sublist(3),
+          ],
+        );
+
+    expect(await gbk.decodeStream(split(gbkBytes)), text);
+    expect(await gb18030.decodeStream(split(gbkBytes)), text);
+    expect(await gb2312.decodeStream(split(gbkBytes)), text);
+    expect(await big5.decodeStream(Stream<List<int>>.empty()), '');
+    expect(
+      await const GbkCodec(allowInvalid: true)
+          .decodeStream(Stream<List<int>>.fromIterable(<List<int>>[
+        <int>[0x80],
+      ])),
+      '\uFFFD',
+    );
   });
 }

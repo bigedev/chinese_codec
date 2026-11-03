@@ -66,16 +66,27 @@ final Map<int, int> hkscsExtendedReverseMap = _buildExtendedReverseMap();
 /// 四格是「一个字节对换两个码位」的组合字符（`0x8862` → U+00CA U+0304 等），
 /// 解码得到两个字符，编码时按这两个码位的组合整体匹配、仍编回同一格。
 class Big5HkscsCodec extends DoubleByteCodec {
+  /// 创建一个 Big5-HKSCS 编解码实例。
+  ///
+  /// [allowInvalid] 决定解码时坏字节怎么处理，详见同名字段。
   const Big5HkscsCodec({super.allowInvalid});
 
+  /// 编码名，固定为 `'big5-hkscs'`（带连字符，全小写）。
+  ///
+  /// 与 `toString()` 的返回值一致，也是下面 [big5hkscs] 实例在 `chineseCodecs` 里的名字。
   @override
   String get name => 'big5-hkscs';
 
+  /// Big5-HKSCS 的字节映射表。
+  ///
+  /// 首字节 0x87-0xFE（0x81-0x86 规范预留、未分配）× 157 个第二字节；
+  /// 主表里放不下的补充平面字符与组合字符记在主表的哨兵位，
+  /// 真正内容在附加表，按格子序号回查。
   @override
   DoubleByteLayout get layout => big5HkscsLayout;
 }
 
-/// Big5-HKSCS 的共享实例。
+/// Big5-HKSCS 的共享实例（严格模式，坏字节抛 [FormatException]）。
 const Big5HkscsCodec big5hkscs = Big5HkscsCodec();
 
 /// Big5-HKSCS 的字节映射表。
