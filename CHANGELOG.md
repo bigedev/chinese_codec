@@ -1,28 +1,38 @@
+# Changelog
+
+[简体中文](CHANGELOG.cn.md) | **English**
+
 ## 0.1.1
 
-- 补齐 pub.dev 的 API 文档：五个编解码类的构造函数与 `name` / `layout` / `encoder` /
-  `decoder` / `decodeStream` / `toString` 都写清了取值与行为，不再只有签名。
-  同时点明 `allowInvalid` **只影响解码** —— 编码方向编不出来的字符一律抛
-  `FormatException`。
-- 修复 `decodeStream`：`Converter` 没有实现分块转换，`dart:convert` 的默认实现一调用
-  就抛 `UnsupportedError`。现在先把字节流读完再解码，多字节字符被切在两个 chunk 之间
-  也能正常解。
+- Filled in the API documentation on pub.dev: the constructors of all five codecs plus
+  `name` / `layout` / `encoder` / `decoder` / `decodeStream` / `toString` now spell out their
+  values and behaviour instead of showing a bare signature. It also states that
+  `allowInvalid` **affects decoding only** — characters that cannot be encoded always throw
+  `FormatException`.
+- Fixed `decodeStream`: `Converter` does not implement chunked conversion, so the default
+  implementation in `dart:convert` threw `UnsupportedError` on the first call. It now reads
+  the whole byte stream before decoding, so multi-byte characters split across two chunks
+  decode correctly.
 
 ## 0.1.0
 
-- 首个版本：GB18030（1 / 2 / 4 字节，含补充平面线性区）、GBK、GB2312、Big5（CP950）、
-  Big5-HKSCS 的编解码。
-- GB18030 按 **2022 版**实现：含国标附录 D 表 D.1 的 19 组码位互换（10 个竖排标点、
-  8 个汉字构件、U+1E3F ⇄ PUA U+E7C7），与 ICU 的 `gb18030-2022.ucm` 逐条对齐。
-- GB 三家共用一张 GB18030 双字节表，GBK / GB2312 的差异用有效性位图 + 2 个 override 表示。
-- 新增 **Big5-HKSCS**：18,594 个格子，含 1,713 个补充平面码位（粤语用字、人名地名用字）。
-  数据取自 WHATWG Encoding Standard 的 `index-big5.txt`（Big5 + HKSCS-2008），
-  并用 CPython 的 `big5hkscs` 交叉核对。
-  - 与 Big5（CP950）**不是包含关系**：格子是 CP950 的超集，但 250 格映射不同
-    （HKSCS 占用了 ETen 扩展的假名、俄文、希腊字母区，如 `0xC6A1` 是「①」而非「ヾ」），
-    要按文件来源选编码。
-  - 4 个格子是「一个字节对换两个码位」的组合字符（`0x8862` → U+00CA U+0304），
-    编解码都按两个码位整体处理，可往返。
-- `allowInvalid` 与 `utf8.decode(allowMalformed:)` 同义：坏字节变 U+FFFD 而不抛异常。
-- `chineseCodecs` / `chineseEncodingByName()` 便于按名字（含 CP936、EUC-CN、Big5-HKSCS
-  等别名）取编码。
+- First release: encode/decode for GB18030 (1 / 2 / 4 bytes, including the supplementary
+  plane linear area), GBK, GB2312, Big5 (CP950) and Big5-HKSCS.
+- GB18030 follows the **2022 edition**: the 19 code point swaps of Annex D, Table D.1 (10
+  vertical punctuation marks, 8 Han components, U+1E3F ⇄ PUA U+E7C7), aligned entry by entry
+  with ICU's `gb18030-2022.ucm`.
+- The three GB encodings share one GB18030 double-byte table; GBK / GB2312 differences are
+  expressed as validity bitmaps plus 2 overrides.
+- New **Big5-HKSCS**: 18,594 cells, including 1,713 supplementary-plane code points
+  (Cantonese, personal and place names). Data comes from WHATWG Encoding Standard's
+  `index-big5.txt` (Big5 + HKSCS-2008) and was cross-checked against CPython's `big5hkscs`.
+  - **Not a superset relationship** with Big5 (CP950): the cells are a superset of CP950, but
+    250 cells map differently (HKSCS repurposed the ETen extension area of kana, Cyrillic and
+    Greek, so `0xC6A1` is "①" rather than "ヾ"). The encoding has to follow the source file.
+  - 4 cells are combining characters — "one byte pair, two code points" (`0x8862` →
+    U+00CA U+0304). Both directions handle the two code points as a unit, so round trips
+    hold.
+- `allowInvalid` means the same as `utf8.decode(allowMalformed:)`: invalid bytes become
+  U+FFFD instead of throwing.
+- `chineseCodecs` / `chineseEncodingByName()` look encodings up by name (knowing aliases such
+  as CP936, EUC-CN and Big5-HKSCS).
