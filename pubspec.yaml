@@ -9,7 +9,6 @@ topics:
   - charset
   - chinese
   - gbk
-  - gb18030
   - big5
 
 environment:
