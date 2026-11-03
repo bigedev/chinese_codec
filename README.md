@@ -1,6 +1,6 @@
 # chinese_codec
 
-[简体中文](README.cn.md) | **English**
+[简体中文](https://atomgit.com/eltoro/chinese_codec/blob/main/README.cn.md) | **English**
 
 Pure Dart codecs for Chinese charsets: **GB18030** (including its 4-byte form and the
 supplementary planes), **GBK**, **GB2312**, **Big5** (CP950) and **Big5-HKSCS** (Hong Kong

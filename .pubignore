@@ -1,0 +1,13 @@
+# 注意：仓库里一旦有 .pubignore，pub 就不再读 .gitignore，
+# 所以下面第一段要和 .gitignore 保持一致。
+
+.dart_tool/
+pubspec.lock
+build/
+tool/.cache/
+
+# 中文文档不进包：pub 只认根目录的 README.md / CHANGELOG.md，
+# 多出一个 CHANGELOG.cn.md 会触发「请把它重命名为 CHANGELOG.md」的 warning，
+# 而 tool/publish.sh 把 warning 当失败。中文版留在仓库里，链接用绝对地址。
+README.cn.md
+CHANGELOG.cn.md

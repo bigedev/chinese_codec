@@ -1,6 +1,6 @@
 # chinese_codec
 
-[English](README.md) | **简体中文**
+[English](https://atomgit.com/eltoro/chinese_codec/blob/main/README.md) | **简体中文**
 
 中文字符集编解码的纯 Dart 实现：**GB18030**（含四字节与补充平面）、**GBK**、**GB2312**、
 **Big5**（CP950）、**Big5-HKSCS**（香港增补字符集）。无原生依赖、无 FFI，服务端、CLI、

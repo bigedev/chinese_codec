@@ -1,6 +1,6 @@
 # Changelog
 
-[简体中文](CHANGELOG.cn.md) | **English**
+[简体中文](https://atomgit.com/eltoro/chinese_codec/blob/main/CHANGELOG.cn.md) | **English**
 
 ## 0.1.1
 
