@@ -16,9 +16,19 @@ const int big5TrailCount = 63 + 94;
 /// Big5 双字节表：序号 → 码位，0 表示不合法。
 final Uint16List big5Table = decodeUint16Table(generated.big5TableBase64);
 
-/// 码位 → 序号。CP950 里有 10 个码位被两个格子重复映射，取序号最小的那个
+/// 码位 → 序号。CP950 里有 10 个码位被两个格子重复映射，默认取序号最小的那个
 /// （编码时给出稳定结果；解码那两个格子都能读出同一个字）。
-final Map<int, int> big5ReverseMap = _buildReverseMap();
+final ReverseCellMap big5ReverseMap = _buildReverseMap();
+
+/// 重复映射里「规范格不是序号最小那格」的码位。
+///
+/// `十` / `卅` 各有两格：A2CC / A2CE（序号小）与 A451 / A4CA。Windows、iconv 的
+/// CP950、CPython 写出来都是后者；照序号最小取会写成前者，同一段文本和 Windows
+/// 生成的字节对不上（diff 出假差异）。所以这里写死规范格。
+const Map<int, int> big5CanonicalCells = <int, int>{
+  0x5341: 0xA451, // 十
+  0x5345: 0xA4CA, // 卅
+};
 
 /// Big5（CP950）编解码。
 ///
@@ -28,6 +38,13 @@ final Map<int, int> big5ReverseMap = _buildReverseMap();
 /// **实现的是 CP950**（Windows 繁体中文的实际上限）：它比经典 Big5 多 42 个格子
 /// （例如 `0xA3E1` 是「€」）、另有 11 个格子映射到不同码位。Windows 存的繁体文件
 /// 基本都是这个变体。
+///
+/// 这 11 格与 CPython 的 `big5` **不同**（Python 用的是老的 BIG5.TXT 表），与
+/// macOS iconv 的 `CP950` 逐格一致 —— 拿 `A145` 举例：这里是「‧」(U+2027)、
+/// Python 给「•」(U+2022)。要比对期望值时别拿 CPython 的 `big5` 当 CP950 基准。
+///
+/// 编码方向对「一个码位占两格」的 10 个码位有规范格偏好（见 [big5CanonicalCells]），
+/// 目的是和 Windows 写出来的字节一致。
 ///
 /// 香港的 Big5-HKSCS 在 [Big5HkscsCodec]：它与 CP950 不是包含关系，250 格映射不同，
 /// 读 HKSCS 文件要用那一个。
@@ -81,18 +98,26 @@ class Big5Layout extends DoubleByteLayout {
     return (lead, offset < 63 ? 0x40 + offset : 0xA1 + offset - 63);
   }
 
-  int _indexOf(int lead, int trail) =>
-      (lead - big5LeadMin) * big5TrailCount +
-      (trail < 0x7F ? trail - 0x40 : trail - 0xA1 + 63);
+  int _indexOf(int lead, int trail) => _big5IndexOf(lead, trail);
 }
 
-Map<int, int> _buildReverseMap() {
-  final Map<int, int> map = <int, int>{};
+/// Big5 系的格子序号公式（Big5-HKSCS 的 157 个第二字节与这里相同，只是首字节
+/// 起点不同，见 `big5hkscs.dart`）。
+int _big5IndexOf(int lead, int trail) =>
+    (lead - big5LeadMin) * big5TrailCount +
+    (trail < 0x7F ? trail - 0x40 : trail - 0xA1 + 63);
+
+ReverseCellMap _buildReverseMap() {
+  final ReverseCellMap map = ReverseCellMap();
   for (int index = 0; index < big5Table.length; index++) {
     final int codePoint = big5Table[index];
-    if (codePoint != 0 && !map.containsKey(codePoint)) {
-      map[codePoint] = index;
+    if (codePoint != 0 && map[codePoint] == null) {
+      map.put(codePoint, index);
     }
   }
+  // 规范格覆盖：这两格序号不是最小的，单独写回（详见 big5CanonicalCells）。
+  big5CanonicalCells.forEach((int codePoint, int bytes) {
+    map.put(codePoint, _big5IndexOf(bytes >> 8, bytes & 0xFF));
+  });
   return map;
 }

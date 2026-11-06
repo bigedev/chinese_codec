@@ -21,7 +21,7 @@ class GbLayout extends DoubleByteLayout {
   final Map<int, int> overrides;
 
   /// 码位 → 格子序号。
-  final Map<int, int> reverseMap;
+  final ReverseCellMap reverseMap;
 
   @override
   bool isLead(int byte) => isLeadByte(byte);
