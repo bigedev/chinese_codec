@@ -221,6 +221,29 @@ void main() {
         'A\uFFFD',
       );
     });
+
+    test('四字节序列的坏组合', () {
+      // 第二个字节是数字 ⇒ 必须是四字节，后面凑不满
+      expect(
+        () => gb18030.decode(<int>[0x81, 0x30, 0x81]),
+        throwsFormatException,
+      );
+      // 第三个字节不是首字节
+      expect(
+        () => gb18030.decode(<int>[0x81, 0x30, 0x20, 0x30]),
+        throwsFormatException,
+      );
+      // 第四个字节不是数字
+      expect(
+        () => gb18030.decode(<int>[0x81, 0x30, 0x81, 0x41]),
+        throwsFormatException,
+      );
+      // 宽松模式按字节补 U+FFFD，中间的 ASCII 不会被吞掉
+      expect(
+        const Gb18030Codec(allowInvalid: true).decode(<int>[0x81, 0x30, 0x81]),
+        '\uFFFD0\uFFFD',
+      );
+    });
   });
 
   test('BMP 四字节区全量往返一致', () {

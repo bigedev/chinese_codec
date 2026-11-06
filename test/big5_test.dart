@@ -24,6 +24,31 @@ void main() {
       expect(big5.encode('€'), <int>[0xa3, 0xe1]);
     });
 
+    test('与 CPython 的 big5 不同的 11 格：跟 Windows CP950 走', () {
+      // 期望值来自 macOS iconv 的 CP950（与本包一致）。CPython 的 big5 用的是老
+      // BIG5.TXT 表，这 11 格给的是另一个码位，不能拿来当 CP950 的基准。
+      const Map<int, String> expected = <int, String>{
+        0xA145: '\u2027', // ‧ vs Python 的 •
+        0xA14E: '\uFE51', // ﹑ vs ､
+        0xA1C2: '\u00AF', // ¯ vs ‾
+        0xA1E3: '\uFF5E', // ～ vs ∼
+        0xA1F2: '\u2295', // ⊕ vs ♁
+        0xA1F3: '\u2299', // ⊙ vs ☉
+        0xA241: '\u2215', // ∕ vs ／
+        0xA242: '\uFE68', // ﹨ vs ＼
+        0xA244: '\uFFE5', // ￥ vs ¥
+        0xA246: '\uFFE0', // ￠ vs ¢
+        0xA247: '\uFFE1', // ￡ vs £
+      };
+      expected.forEach((int cell, String text) {
+        expect(
+          big5.decode(<int>[cell >> 8, cell & 0xFF]),
+          text,
+          reason: '0x${cell.toRadixString(16)}',
+        );
+      });
+    });
+
     test('ASCII 与空输入', () {
       expect(big5.decode(<int>[0x41, 0x42]), 'AB');
       expect(big5.decode(const <int>[]), '');
@@ -60,6 +85,17 @@ void main() {
       for (final String ch in <String>['汉', '简', '国']) {
         expect(() => big5.encode(ch), throwsFormatException, reason: ch);
       }
+    });
+
+    test('重复映射的规范格：十 / 卅 写成 Windows 用的那格', () {
+      // CP950 里这两个字各占两格：A2CC / A2CE（序号小）与 A451 / A4CA。
+      // Windows、iconv 的 CP950、CPython 写出来都是后者；按序号最小取会写成前者，
+      // 和 Windows 生成的字节对不上。
+      expect(big5.encode('十'), <int>[0xa4, 0x51]);
+      expect(big5.encode('卅'), <int>[0xa4, 0xca]);
+      // 两个格子解出来是同一个字，所以非规范格读起来也没问题
+      expect(big5.decode(<int>[0xa2, 0xcc]), '十');
+      expect(big5.decode(<int>[0xa2, 0xce]), '卅');
     });
 
     test('CP950 不含 HKSCS 扩展（要用 big5hkscs）', () {

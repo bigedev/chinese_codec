@@ -89,6 +89,45 @@ void main() {
       expect(big5hkscs.encode('\u{21D53}'), <int>[0x87, 0x7b]);
     });
 
+    test('编码优先标准 Big5 区，不写扩展区格子', () {
+      // 0.1.1 会把「兙」写成 0x92AF（HKSCS 扩展区），CP950 / Windows 解不出来；
+      // 标准区是 0xA259。同理「侻」应该是 0xCDE7 而不是 0x9C53。
+      expect(big5hkscs.encode('兙'), <int>[0xa2, 0x59]);
+      expect(big5hkscs.encode('侻'), <int>[0xcd, 0xe7]);
+      expect(big5hkscs.encode('僭'), <int>[0xb9, 0xb0]);
+      // 重复映射的两个字也跟 CP950 用同一格
+      expect(big5hkscs.encode('十'), <int>[0xa4, 0x51]);
+      expect(big5hkscs.encode('卅'), <int>[0xa4, 0xca]);
+    });
+
+    test('CP950 编得出来的字，HKSCS 不落在 CP950 解不了的区间', () {
+      int checked = 0;
+      final List<int> exceptions = <int>[];
+      for (int codePoint = 0x80; codePoint <= 0xFFFF; codePoint++) {
+        if (codePoint >= 0xD800 && codePoint <= 0xDFFF) continue;
+        final String ch = String.fromCharCode(codePoint);
+        try {
+          big5.encode(ch);
+        } on FormatException {
+          continue;
+        }
+        checked++;
+        List<int>? hkscs;
+        try {
+          hkscs = big5hkscs.encode(ch);
+        } on FormatException {
+          hkscs = null;
+        }
+        if (hkscs == null || hkscs[0] < 0xa1 || hkscs[0] > 0xf9) {
+          exceptions.add(codePoint);
+        }
+      }
+      expect(checked, 13742);
+      // 唯一例外：U+2593「▓」在 CP950 有 F9FE 这一格，HKSCS 把 F9FE 给了别的字，
+      // 所以 HKSCS 里根本编不出来 —— 属于字符集本身的取舍，不是选格问题。
+      expect(exceptions, <int>[0x2593]);
+    });
+
     test('组合字符整体编回一格，单独的 Ê 是另一格', () {
       expect(big5hkscs.encode('\u00ca'), <int>[0x88, 0x66]);
       expect(big5hkscs.encode('\u00ca\u0304'), <int>[0x88, 0x62]);

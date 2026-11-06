@@ -27,8 +27,18 @@ void main() {
     expect(chineseEncodingByName('big5hkscs'), same(big5hkscs));
     expect(chineseEncodingByName('hkscs'), same(big5hkscs));
     expect(chineseEncodingByName('shift_jis'), isNull);
-    expect(chineseEncodingByName('gb18030-2022'), isNull);
     expect(chineseEncodingByName(''), isNull);
+    // 首尾空白要去掉：HTTP 头里 `charset=GBK ` 很常见
+    expect(chineseEncodingByName(' gbk '), same(gbk));
+    expect(chineseEncodingByName('\tBig5\n'), same(big5));
+    // 常见写法变体
+    expect(chineseEncodingByName('gb-2312'), same(gb2312));
+    expect(chineseEncodingByName('x-gbk'), same(gbk));
+    expect(chineseEncodingByName('cp-936'), same(gbk));
+    expect(chineseEncodingByName('cp-950'), same(big5));
+    // GB18030 的版本号标签都指向同一实现（本实现按 2022 版映射）
+    expect(chineseEncodingByName('gb18030-2022'), same(gb18030));
+    expect(chineseEncodingByName('gb18030-2000'), same(gb18030));
   });
 
   test('三者都是 Encoding，可直接用于 Codec 接口', () {
@@ -74,5 +84,49 @@ void main() {
       ])),
       '\uFFFD',
     );
+  });
+
+  group('ChunkedConversion（0.1.2 之前这里全抛 UnsupportedError）', () {
+    test('decoder.bind 跨 chunk 收齐再解', () async {
+      const String text = '中文混合ASCII';
+      final List<int> bytes = gbk.encode(text);
+      final String decoded = await gbk.decoder
+          .bind(Stream<List<int>>.fromIterable(<List<int>>[
+            bytes.sublist(0, 1),
+            bytes.sublist(1, 3),
+            bytes.sublist(3),
+          ]))
+          .join();
+      expect(decoded, text);
+    });
+
+    test('encoder.bind 逐块编码并拼接', () async {
+      const String text = '中文混合ASCII';
+      final List<int> bytes = await gbk.encoder
+          .bind(Stream<String>.fromIterable(<String>['中文', '混合ASCII']))
+          .expand((List<int> chunk) => chunk)
+          .toList();
+      expect(bytes, gbk.encode(text));
+    });
+
+    test('stream.transform(codec.decoder) 能走通', () async {
+      final List<int> bytes = gb18030.encode('中文');
+      expect(
+        await Stream<List<int>>.value(bytes).transform(gb18030.decoder).join(),
+        '中文',
+      );
+    });
+
+    test('GB18030 四字节序列被切成两半也能解', () async {
+      const String rare = '\u{10000}';
+      final List<int> four = gb18030.encode(rare);
+      final String decoded = await gb18030.decoder
+          .bind(Stream<List<int>>.fromIterable(<List<int>>[
+            four.sublist(0, 2),
+            four.sublist(2),
+          ]))
+          .join();
+      expect(decoded, rare);
+    });
   });
 }
