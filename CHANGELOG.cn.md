@@ -2,6 +2,26 @@
 
 [English](https://atomgit.com/eltoro/chinese_codec/blob/main/CHANGELOG.md) | **简体中文**
 
+## 0.1.2
+
+- **Big5-HKSCS 编码改用标准 Big5 区格子**：字符在标准区有格时，0.1.1 会写成 HKSCS 扩展区
+  那一格（如「兙」写成 `0x92AF`），CP950 / Windows 解不出来。现在优先 lead `0xA1`–`0xF9`
+  的标准区（「兙」是 `0xA259`）。受影响 56 个码位，解码方向不变。
+- **Big5 / Big5-HKSCS 编码改用规范格**：CP950 里占两格的 `十` / `卅` 现在写 `0xA451` /
+  `0xA4CA`（Windows、iconv 的 CP950、CPython 都是这个），不再是 `0xA2CC` / `0xA2CE`。
+  两格都能正常解码。
+- **分块转换可用**：`codec.decoder.bind(...)`、`codec.encoder.bind(...)`、
+  `stream.transform(codec.decoder)` 以前直接抛 `UnsupportedError`。解码方向仍是「收齐再
+  解」（一个汉字可能被切在两个 chunk 之间），编码方向逐块转。
+- **解码快 2–3 倍、GB18030 编码快 8 倍**：解码不再为每个字造一个单字符 `String`；
+  GB18030 编码不再用 `BytesBuilder` 逐字节写；反查表从哈希表换成 `Uint16List`
+  （GBK 冷启动 2.7 ms → 0.13 ms，每个编码最多 1.7 MB → 128 KB）。
+- `chineseEncodingByName` 去掉首尾空白，并多认几个别名：`GB-2312`、`CP-936`、`CP-950`、
+  `X-GBK`、`GB18030-2000`、`GB18030-2022`。
+- 重新导出 `dart:convert` 的 `Encoding`，写 `List<Encoding>` 时不必再单独 import。
+- 文档补充：Big5 有 11 格标点跟 Windows CP950 走、与 CPython 的 `big5` 不同；
+  Big5-HKSCS 有 11 格跟 WHATWG 走、与 glibc / CPython 不同。
+
 ## 0.1.1
 
 - 补齐 pub.dev 的 API 文档：五个编解码类的构造函数与 `name` / `layout` / `encoder` /

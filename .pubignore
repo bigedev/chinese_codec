@@ -4,7 +4,10 @@
 .dart_tool/
 pubspec.lock
 build/
-tool/.cache/
+
+# 生成脚本、发布脚本、审计文档都不进包：包只该有 lib / example / test 和两份根文档。
+tool/
+docs/
 
 # 中文文档不进包：pub 只认根目录的 README.md / CHANGELOG.md，
 # 多出一个 CHANGELOG.cn.md 会触发「请把它重命名为 CHANGELOG.md」的 warning，

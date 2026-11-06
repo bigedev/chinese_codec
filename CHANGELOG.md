@@ -2,6 +2,29 @@
 
 [简体中文](https://atomgit.com/eltoro/chinese_codec/blob/main/CHANGELOG.cn.md) | **English**
 
+## 0.1.2
+
+- **Big5-HKSCS encoding used to pick the HKSCS extension cell** whenever a character also had
+  a regular Big5 cell: `兙` came out as `0x92AF`, which CP950 / Windows cannot decode. Encoding
+  now prefers the standard Big5 block (lead `0xA1`–`0xF9`) — that character is `0xA259` again.
+  56 code points were affected; decoding is unchanged.
+- **Big5 / Big5-HKSCS encoding now writes the canonical cell** for the two characters that
+  CP950 maps twice: `十` → `0xA451`, `卅` → `0xA4CA` (what Windows, iconv's CP950 and CPython
+  emit) instead of `0xA2CC` / `0xA2CE`. Decoding either cell still works.
+- **Chunked conversion now works**: `codec.decoder.bind(...)`, `codec.encoder.bind(...)` and
+  `stream.transform(codec.decoder)` used to throw `UnsupportedError`. Decoding buffers the
+  whole stream (a multi-byte character may straddle two chunks); encoding converts per chunk.
+- **Decoding is 2–3× faster, GB18030 encoding up to 8×**: the decoder no longer allocates a
+  single-character `String` per decoded character, the GB18030 encoder no longer writes byte by
+  byte through `BytesBuilder`, and the reverse lookup tables are a `Uint16List` instead of a
+  hash map (GBK cold start 2.7 ms → 0.13 ms; up to 1.7 MB → 128 KB per encoding).
+- `chineseEncodingByName` trims surrounding whitespace and knows more aliases: `GB-2312`,
+  `CP-936`, `CP-950`, `X-GBK`, `GB18030-2000`, `GB18030-2022`.
+- `Encoding` from `dart:convert` is re-exported, so `List<Encoding>` no longer needs a second
+  import.
+- Documented the 11 punctuation cells where Big5 follows Windows CP950 but CPython's `big5`
+  does not, and the 11 cells where Big5-HKSCS follows WHATWG but glibc / CPython do not.
+
 ## 0.1.1
 
 - Filled in the API documentation on pub.dev: the constructors of all five codecs plus
