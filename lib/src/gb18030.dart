@@ -2,7 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'double_byte_codec.dart'
-    show BufferedDecodeSink, PerChunkEncodeSink, decodeWholeStream;
+    show
+        BufferedDecodeSink,
+        DecodeReport,
+        PerChunkEncodeSink,
+        decodeWholeStream;
 import 'gb_layout.dart';
 import 'tables.dart';
 
@@ -63,6 +67,19 @@ class Gb18030Codec extends Encoding {
   Future<String> decodeStream(Stream<List<int>> byteStream) =>
       decodeWholeStream(this, byteStream);
 
+  /// 宽松解码，并把「哪些字节被换成了 U+FFFD」一并报出来。
+  ///
+  /// 语义与 `DoubleByteCodec.decodeLossy` 相同，只是这里多一种四字节形式：
+  /// 一个凑不齐或非法的四字节序列会按字节记 2~3 条偏移（不是合并成一条），
+  /// 中间夹着的 ASCII 不会被吞掉。
+  ///
+  /// **不受 [allowInvalid] 影响**：总是宽松解码。
+  DecodeReport decodeLossy(List<int> bytes) {
+    final List<int> lostOffsets = <int>[];
+    final String text = _Gb18030Decoder(this, lostOffsets).convert(bytes);
+    return DecodeReport(text, lostOffsets);
+  }
+
   /// 返回编码名，与 [name] 相同（`gb18030`）。
   @override
   String toString() => name;
@@ -72,9 +89,12 @@ class Gb18030Codec extends Encoding {
 const Gb18030Codec gb18030 = Gb18030Codec();
 
 class _Gb18030Decoder extends Converter<List<int>, String> {
-  const _Gb18030Decoder(this._codec);
+  const _Gb18030Decoder(this._codec, [this._lost]);
 
   final Gb18030Codec _codec;
+
+  /// 非空时开启「宽松解码 + 记录坏字节偏移」，见 [Gb18030Codec.decodeLossy]。
+  final List<int>? _lost;
 
   @override
   String convert(List<int> input) {
@@ -117,13 +137,14 @@ class _Gb18030Decoder extends Converter<List<int>, String> {
           }
         }
       }
-      if (!_codec.allowInvalid) {
+      if (!_codec.allowInvalid && _lost == null) {
         throw FormatException(
           'Invalid gb18030 byte sequence',
           input,
           index,
         );
       }
+      _lost?.add(index);
       out.writeCharCode(0xFFFD);
       index++;
     }

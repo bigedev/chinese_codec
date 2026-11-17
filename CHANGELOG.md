@@ -1,6 +1,26 @@
 # Changelog
 
-[简体中文](https://atomgit.com/eltoro/chinese_codec/blob/main/CHANGELOG.cn.md) | **English**
+[简体中文](https://github.com/bigedev/chinese_codec/blob/main/CHANGELOG.cn.md) | **English**
+
+## 0.1.3
+
+- **Four helpers for the "what encoding is this file?" question** — the answer is evidence,
+  not a guess:
+  - `tryDecode(bytes, encoding)` decodes strictly and returns `null` instead of throwing;
+  - `verifyRoundTrip(bytes, encoding)` checks that decoding and re-encoding gives back the
+    same bytes;
+  - `codecsThatRoundTrip(bytes)` lists every candidate that passes — **0** means "not UTF-8
+    and not any Chinese charset", **1** is your answer, **several** means the byte spaces
+    overlap. Documented honestly: the GBK bytes of `中文` round-trip as Big5 too (`笢恅`),
+    so this cannot tell Simplified from Traditional — the package still never guesses.
+  - `unrepresentableRunes(text, encoding)` lists **every** character the target charset
+    cannot store; `encode` only reports the first one.
+- **`decodeLossy` on all five codecs**: lenient decoding that also says where it lost data.
+  Returns a `DecodeReport` with `text`, `lostOffsets` (ascending byte offsets) and
+  `lostBytes`; every U+FFFD in the text has a matching offset. It ignores `allowInvalid` —
+  a report only makes sense when decoding is lenient.
+- `example/` grew from a set of one-liners into a walkthrough: unknown bytes → candidate
+  encodings → loss report → export check.
 
 ## 0.1.2
 

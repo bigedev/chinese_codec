@@ -1,6 +1,22 @@
 # 变更记录
 
-[English](https://atomgit.com/eltoro/chinese_codec/blob/main/CHANGELOG.md) | **简体中文**
+[English](https://github.com/bigedev/chinese_codec/blob/main/CHANGELOG.md) | **简体中文**
+
+## 0.1.3
+
+- **新增四个「这文件是什么编码」的辅助函数**——给的是证据，不是猜测：
+  - `tryDecode(bytes, encoding)`：严格解码，解不出来返回 `null` 而不抛异常；
+  - `verifyRoundTrip(bytes, encoding)`：解出来再编回去，字节逐位相同才算通过；
+  - `codecsThatRoundTrip(bytes)`：列出全部通过校验的候选——**0 条**表示「既不是 UTF-8、
+    也不是任何中文编码」，**1 条**就是答案，**多条**说明字节空间重叠。文档写明了它的
+    边界：`中文` 的 GBK 字节按 Big5 也能通过回环（解成 `笢恅`），所以它区分不了简繁，
+    本包仍然不做猜测；
+  - `unrepresentableRunes(text, encoding)`：列出目标编码**装不下的全部字符**，而
+    `encode` 只报第一个。
+- **五种编码都加了 `decodeLossy`**：宽松解码，并说明坏在哪。返回 `DecodeReport`，
+  含 `text`、`lostOffsets`（升序字节偏移）与 `lostBytes`；文本里每个 U+FFFD 都对应
+  一条偏移。它不受 `allowInvalid` 影响——报告只在宽松解码时才有意义。
+- `example/` 从几条单行示例扩成完整走查：未知字节 → 候选编码 → 丢失报告 → 导出检查。
 
 ## 0.1.2
 

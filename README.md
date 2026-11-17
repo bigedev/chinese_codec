@@ -1,6 +1,6 @@
 # chinese_codec
 
-[简体中文](https://atomgit.com/eltoro/chinese_codec/blob/main/README.cn.md) | **English**
+[简体中文](https://github.com/bigedev/chinese_codec/blob/main/README.cn.md) | **English**
 
 Pure Dart codecs for Chinese charsets: **GB18030** (including its 4-byte form and the
 supplementary planes), **GBK**, **GB2312**, **Big5** (CP950) and **Big5-HKSCS** (Hong Kong
@@ -48,6 +48,17 @@ const GbkCodec lenient = GbkCodec(allowInvalid: true);
 final String text = lenient.decode(bytes);  // invalid bytes → U+FFFD, same as utf8 allowMalformed
 ```
 
+Reading *something* **and** knowing where it went wrong — `decodeLossy` reports the offset
+of every byte it had to replace:
+
+```dart
+final DecodeReport report = GbkCodec().decodeLossy(bytes);
+if (!report.isClean) {
+  print('${report.lostBytes} bytes lost at ${report.lostOffsets}');
+  // e.g. "2 bytes lost at [1, 3]" — every U+FFFD in report.text has a matching offset
+}
+```
+
 Lookups by name (knows aliases such as `CP936`, `EUC-CN`, `CP950` — handy for MIME types and
 git config):
 
@@ -68,15 +79,38 @@ chineseEncodingByName('big5-hkscs'); // Big5HkscsCodec
 | Big5 (CP950) | ASCII | ✓ (13,752 cells) | ✗ | Traditional Chinese; the most common on Windows |
 | Big5-HKSCS | ASCII | ✓ (18,594 cells, including all 13,752 of CP950) | ✗ | Traditional Chinese; HKSCS, includes 1,713 supplementary-plane code points |
 
-Suggested detection order: **try UTF-8 first, then GB18030 (Simplified) / Big5 or Big5-HKSCS
-(Traditional)**. A wide encoding that *can* decode a byte sequence has not necessarily
-decoded it *correctly* — random bytes may still come out as rare characters. For more
-confidence, verify a round trip:
+Suggested order: **try UTF-8 first, then a Chinese codec confirmed by a round trip**.
+A wide encoding that *can* decode a byte sequence has not necessarily decoded it
+*correctly* — random bytes may still come out as rare characters (or as valid ones).
 
 ```dart
-final String text = gb18030.decode(bytes);
-if (gb18030.encode(text).toString() == bytes.toString()) {
-  // round trip matches, the guess is probably right
+final String? utf8Text = tryDecode(bytes, utf8);
+if (utf8Text != null) return utf8Text;
+
+final List<Encoding> fits = codecsThatRoundTrip(bytes);
+// 0 candidates: neither UTF-8 nor any Chinese charset (truncated / binary / other)
+// 1 candidate : that is your answer (GB18030 four-byte sequences land here)
+// several     : the byte spaces overlap — the call is yours
+```
+
+`codecsThatRoundTrip` is **evidence, not a guess**: it reports which encodings decode the
+bytes *and* re-encode them back to the same bytes. Two things it deliberately does not do:
+
+- It does **not** tell Simplified from Traditional. The GBK bytes of `中文` round-trip
+  cleanly as Big5 too (they come out as `笢恅`), so all five codecs can pass on ordinary
+  Simplified text. What narrows the list down is GB2312 running out of cells, GB18030's
+  four-byte sequences, or a file that is not text at all.
+- It does **not** score candidates by character frequency. That is a heuristic, and a wrong
+  guess is harder to debug than an error, so the decision stays with the caller.
+
+Before writing a file, check whether the target charset can hold the text at all —
+`encode` throws on the *first* character it cannot represent, `unrepresentableRunes`
+lists every one of them:
+
+```dart
+final List<int> missing = unrepresentableRunes(text, gb2312);
+if (missing.isNotEmpty) {
+  print('GB2312 cannot store: ${missing.map(String.fromCharCode).join()}');
 }
 ```
 
@@ -118,9 +152,11 @@ if (gb18030.encode(text).toString() == bytes.toString()) {
   `0xA1A4` is "・" (U+30FB) and `0xA1AA` is "―" (U+2015). `U+00B7` is therefore not
   representable in GB2312 — an inconsistency of the standard itself, not a deviation of this
   package.
-- No encoding **detection**: given a byte sequence, the package will not guess "GBK or Big5?".
-  A wrong guess is harder to debug than an error, so detection is left to the caller (see
-  "UTF-8 first, then the matching codec + round-trip check" above).
+- No encoding **detection**, only evidence: `tryDecode` / `verifyRoundTrip` /
+  `codecsThatRoundTrip` tell you which encodings *can* explain a byte sequence, but nothing
+  ranks them or picks one. Overlapping byte spaces mean ordinary Simplified text also passes
+  as valid (but wrong) Big5 — a wrong automatic guess is harder to debug than an error, so
+  the decision stays with the caller (see Coverage above).
 
 ## Implementation and size
 

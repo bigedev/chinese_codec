@@ -104,9 +104,59 @@ abstract class DoubleByteCodec extends Encoding {
   Future<String> decodeStream(Stream<List<int>> byteStream) =>
       decodeWholeStream(this, byteStream);
 
+  /// 宽松解码，并把「哪些字节被换成了 U+FFFD」一并报出来。
+  ///
+  /// 与 `GbkCodec(allowInvalid: true).decode(bytes)` 的区别只有一处：那个只会给你
+  /// 一串替换符，看不出丢了多少、丢在哪 —— 这个给 [DecodeReport]。
+  ///
+  /// **不受 [allowInvalid] 影响**：它总是宽松解码（否则坏字节一律抛异常，
+  /// 也就无从报告）。批次导入、编码转换这类「先读进来再看坏在哪」的场合用它；
+  /// 只要文本、不在乎坏字节时，宽松实例的 `decode` 更省一次记录开销。
+  ///
+  /// ```dart
+  /// const DecodeReport report = GbkCodec().decodeLossy(bytes);
+  /// if (!report.isClean) {
+  ///   print('${report.lostBytes} 个字节解不出来，位置 ${report.lostOffsets}');
+  /// }
+  /// ```
+  DecodeReport decodeLossy(List<int> bytes) {
+    final List<int> lostOffsets = <int>[];
+    final String text = _DoubleByteDecoder(this, lostOffsets).convert(bytes);
+    return DecodeReport(text, lostOffsets);
+  }
+
   /// 返回编码名，与 [name] 相同（例如 `gbk`）。
   @override
   String toString() => name;
+}
+
+/// 宽松解码的结果：文本 + 每个被替换掉的字节位置。
+///
+/// 由 [DoubleByteCodec.decodeLossy] / `Gb18030Codec.decodeLossy` 产出。替换粒度与
+/// `allowInvalid` 一致 —— **按字节**：一个非法字节记一条偏移、补一个 U+FFFD，
+/// 所以一个凑不齐的四字节序列会得到 2~3 条偏移（中间夹的 ASCII 不在其中）。
+///
+/// `text` 里的 U+FFFD 与 `lostOffsets` 一一对应（顺序一致），可以据此把坏字节
+/// 定位回原始数据。
+class DecodeReport {
+  /// 创建一个报告。一般不必自己构造，用 `decodeLossy` 就行。
+  const DecodeReport(this.text, this.lostOffsets);
+
+  /// 宽松解码出来的文本：坏字节的位置上是 U+FFFD。
+  final String text;
+
+  /// 被替换字节在**输入**里的偏移（升序，0 起）。
+  final List<int> lostOffsets;
+
+  /// 丢掉了几个字节（= [lostOffsets] 的长度）。
+  int get lostBytes => lostOffsets.length;
+
+  /// 全程没有坏字节 —— 这份报告与严格解码的结果完全一致。
+  bool get isClean => lostOffsets.isEmpty;
+
+  @override
+  String toString() =>
+      'DecodeReport(${text.length} chars, lost $lostBytes bytes)';
 }
 
 /// 把 [byteStream] 读完再交给 [codec] 一次性解码。
@@ -126,9 +176,12 @@ Future<String> decodeWholeStream(
 }
 
 class _DoubleByteDecoder extends Converter<List<int>, String> {
-  const _DoubleByteDecoder(this._codec);
+  const _DoubleByteDecoder(this._codec, [this._lost]);
 
   final DoubleByteCodec _codec;
+
+  /// 非空时开启「宽松解码 + 记录坏字节偏移」，见 [DoubleByteCodec.decodeLossy]。
+  final List<int>? _lost;
 
   @override
   String convert(List<int> input) {
@@ -150,13 +203,14 @@ class _DoubleByteDecoder extends Converter<List<int>, String> {
           continue;
         }
       }
-      if (!_codec.allowInvalid) {
+      if (!_codec.allowInvalid && _lost == null) {
         throw FormatException(
           'Invalid ${_codec.name} byte sequence',
           input,
           index,
         );
       }
+      _lost?.add(index);
       out.writeCharCode(0xFFFD);
       index++;
     }

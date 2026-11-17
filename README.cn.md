@@ -1,6 +1,6 @@
 # chinese_codec
 
-[English](https://atomgit.com/eltoro/chinese_codec/blob/main/README.md) | **简体中文**
+[English](https://github.com/bigedev/chinese_codec/blob/main/README.md) | **简体中文**
 
 中文字符集编解码的纯 Dart 实现：**GB18030**（含四字节与补充平面）、**GBK**、**GB2312**、
 **Big5**（CP950）、**Big5-HKSCS**（香港增补字符集）。无原生依赖、无 FFI，服务端、CLI、
@@ -46,6 +46,17 @@ const GbkCodec lenient = GbkCodec(allowInvalid: true);
 final String text = lenient.decode(bytes);  // 坏字节 → U+FFFD，与 utf8 allowMalformed 同义
 ```
 
+既要读出来、又想知道**坏在哪**时用 `decodeLossy` —— 它宽松解码，并给出每个被替换
+字节的偏移：
+
+```dart
+final DecodeReport report = GbkCodec().decodeLossy(bytes);
+if (!report.isClean) {
+  print('丢了 ${report.lostBytes} 个字节，位置 ${report.lostOffsets}');
+  // 例如「丢了 2 个字节，位置 [1, 3]」——report.text 里每个 U+FFFD 都对应一条偏移
+}
+```
+
 按名字取（认 `CP936`、`EUC-CN`、`CP950` 这类别名，常用于解析 MIME / git 配置）：
 
 ```dart
@@ -65,14 +76,34 @@ chineseEncodingByName('big5-hkscs'); // Big5HkscsCodec
 | Big5（CP950） | ASCII | ✓（13,752 个格子） | ✗ | 繁体；Windows 上最常见 |
 | Big5-HKSCS | ASCII | ✓（18,594 个格子，含 CP950 的全部 13,752 格） | ✗ | 繁体；香港增补字符集，含 1,713 个补充平面码位 |
 
-判定建议：**先试 UTF-8，失败再试 GB18030（简体）/ Big5 或 Big5-HKSCS（繁体）**。
-覆盖面大的编码「能解」不等于「解对了」—— 一段随机字节也可能被成功解成生僻字。
-要更稳的话做一次往返校验：
+判定建议：**先试 UTF-8，失败再用往返校验确认中文编码**。覆盖面大的编码「能解」不等于
+「解对了」—— 一段随机字节也可能被成功解成生僻字（或者合法但完全错误的字）。
 
 ```dart
-final String text = gb18030.decode(bytes);
-if (gb18030.encode(text).toString() == bytes.toString()) {
-  // 往返一致，基本可以认为判断正确
+final String? utf8Text = tryDecode(bytes, utf8);
+if (utf8Text != null) return utf8Text;
+
+final List<Encoding> fits = codecsThatRoundTrip(bytes);
+// 0 条：既不是 UTF-8，也不是任何中文编码（截断 / 二进制 / 别的字符集）
+// 1 条：就是它（GB18030 的四字节序列落在这一类）
+// 多条：字节空间重叠，由业务决定
+```
+
+`codecsThatRoundTrip` 给的是**证据，不是猜测**：它只报告哪些编码能解开这段字节、
+且编回去还是同样的字节。它有意不做两件事：
+
+- **不区分简繁**。`中文` 的 GBK 字节按 Big5 同样能通过回环（解出来是 `笢恅`），
+  所以普通简体文本五种编码可能全部通过。真正能收窄候选的是：GB2312 装不下的字、
+  GB18030 的四字节序列、以及「根本不是文本」。
+- **不按字频打分**。那是启发式，猜错比报错更难查，选择权留给调用方。
+
+写文件前想确认目标编码是否装得下，用 `unrepresentableRunes` —— `encode` 遇到第一个
+装不下的字符就抛，这个函数会把**全部**装不下的字符列出来：
+
+```dart
+final List<int> missing = unrepresentableRunes(text, gb2312);
+if (missing.isNotEmpty) {
+  print('GB2312 装不下：${missing.map(String.fromCharCode).join()}');
 }
 ```
 
@@ -106,8 +137,9 @@ if (gb18030.encode(text).toString() == bytes.toString()) {
 - GB2312 里有两个格子与 GBK / GB18030 映射到不同码位（历史遗留）：
   `0xA1A4` 是「・」(U+30FB)、`0xA1AA` 是「―」(U+2015)。所以 `U+00B7` 在 GB2312 下
   不可表示 —— 这是国标本身的不一致，不是本包的偏差。
-- 不做编码**探测**：给一段字节，包不会替你猜「这大概是 GBK 还是 Big5」。猜错比报错更
-  难查，探测留给调用方（见上面的「先 UTF-8 后对应编码 + 往返校验」）。
+- 不做编码**探测**，只给证据：`tryDecode` / `verifyRoundTrip` / `codecsThatRoundTrip`
+  会告诉你哪些编码**能**解释这段字节，但不会排序、不会替你选。字节空间本来就是重叠的，
+  普通简体文本按 Big5 也能通过 —— 猜错比报错更难查，选择权留给调用方（见上面的「覆盖范围」）。
 
 ## 实现与体积
 
