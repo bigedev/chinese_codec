@@ -19,6 +19,23 @@
   Returns a `DecodeReport` with `text`, `lostOffsets` (ascending byte offsets) and
   `lostBytes`; every U+FFFD in the text has a matching offset. It ignores `allowInvalid` —
   a report only makes sense when decoding is lenient.
+- **Streaming decode is genuinely incremental now**: `decodeStream(...)`, `decoder.bind(...)`
+  and `stream.transform(codec.decoder)` emit text as each chunk arrives instead of reading the
+  whole stream first. Only the 1–3 trailing bytes that cannot be decided yet are held back
+  (up to three for the GB18030 four-byte form). Measured with 8 KB chunks: 74 → 96 MB/s (AOT,
+  1 MB corpus), and a large file no longer has to fit in memory. In strict mode a bad byte can
+  now surface mid-stream: everything decoded before it — including the part of the failing
+  chunk that precedes the bad byte — is still delivered, and the stream produces no text after
+  the error. (Upstream is not cancelled on error, and continuing would stitch the stale held
+  bytes into characters that were never there.)
+- **Streaming decode reports offsets into the whole stream.** They used to be offsets into the
+  input being decoded; a stream has no single such input, so `FormatException.source` is empty.
+- **Encoding no longer chokes on a character whose two code units are split across chunks** —
+  the surrogate pair of a supplementary-plane character, and the four Big5-HKSCS combining
+  characters (`0x8862` → U+00CA U+0304 occupies one cell but two code points).
+  `stream.transform(codec.encoder)` used to throw "not representable" when the halves landed in
+  different chunks. It now holds the first half until the second arrives; if the stream ends
+  with only the first half, it still throws.
 - `example/` grew from a set of one-liners into a walkthrough: unknown bytes → candidate
   encodings → loss report → export check.
 

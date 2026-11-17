@@ -87,7 +87,7 @@ void main() {
   });
 
   group('ChunkedConversion（0.1.2 之前这里全抛 UnsupportedError）', () {
-    test('decoder.bind 跨 chunk 收齐再解', () async {
+    test('decoder.bind 跨 chunk 边收边解', () async {
       const String text = '中文混合ASCII';
       final List<int> bytes = gbk.encode(text);
       final String decoded = await gbk.decoder

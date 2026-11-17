@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 /// 「字节对 ↔ 码位」的映射，双字节编码的差异全在这里。
 ///
@@ -44,6 +42,14 @@ abstract class DoubleByteLayout {
     return true;
   }
 
+  /// 这个 code unit 后面还跟着一个 code unit 才算一个字符吗（块尾要留住它）。
+  ///
+  /// 分块编码用：一个字符的原料被切在两块之间时，只拿到前一半不能编。代理对由
+  /// `ChunkedEncodeSink` 统一处理（Dart 字符串本身的规则），这个钩子只管「不是代理对、
+  /// 但同样两单元一格」的字符 —— 目前只有 Big5-HKSCS 那 4 个组合字符
+  /// （`0x8862` → U+00CA U+0304 这类）。
+  bool startsTwoUnitChar(int codeUnit) => false;
+
   /// 从 [input] 的 [index] 开始匹配一个字符，返回（字节对，消耗的 UTF-16 长度）。
   ///
   /// 默认一个码位一格。组合字符要一次吃掉两个码位才能在编码方向往返，
@@ -65,6 +71,12 @@ abstract class DoubleByteLayout {
 /// 解码方向：坏字节抛 [FormatException]，[allowInvalid] 为 true 时换成 U+FFFD。
 /// 编码方向：字符在该字符集里没有对应格子时**总是**抛 [FormatException]，
 /// [allowInvalid] 不影响编码 —— 宽松模式只负责「尽量读出来」，不能凭空造字。
+///
+/// 解码方向是**真增量**的：`decodeStream(...)`、`decoder.bind(...)`、
+/// `stream.transform(codec.decoder)` 每收到一块就把已经能确定的字符吐出去，只有块尾
+/// 「首字节后面还没有第二字节」的那一个字节留到下一块再算。严格模式下坏字节可能在
+/// 中途抛出，此前已经吐出的文本是完整可信的前缀（不是从中间截断的半个字符），抛错之后
+/// 这条流不再产出任何文本。
 abstract class DoubleByteCodec extends Encoding {
   /// 创建一个编解码实例。
   ///
@@ -95,14 +107,6 @@ abstract class DoubleByteCodec extends Encoding {
   /// 解码器：坏字节按 [allowInvalid] 抛 [FormatException] 或换成 U+FFFD。
   @override
   Converter<List<int>, String> get decoder => _DoubleByteDecoder(this);
-
-  /// 把整个字节流读完再解码，结果等同 `decode(整段字节)`。
-  ///
-  /// 不是增量解码，好处是多字节字符被切在两个 chunk 之间也不受影响。
-  /// 内部实现见 [decodeWholeStream]。
-  @override
-  Future<String> decodeStream(Stream<List<int>> byteStream) =>
-      decodeWholeStream(this, byteStream);
 
   /// 宽松解码，并把「哪些字节被换成了 U+FFFD」一并报出来。
   ///
@@ -159,20 +163,167 @@ class DecodeReport {
       'DecodeReport(${text.length} chars, lost $lostBytes bytes)';
 }
 
-/// 把 [byteStream] 读完再交给 [codec] 一次性解码。
+/// 解双字节编码的一段字节，文本写进 [out]，返回消费掉的字节数。
 ///
-/// `Converter` 的子类没有实现分块转换，`dart:convert` 里 [Encoding.decodeStream]
-/// 的默认实现走的正是分块路径（`decoder.bind` → `startChunkedConversion`），
-/// 一用就抛 `UnsupportedError`。所以各编码统一覆盖成「先读完再解」。
-Future<String> decodeWholeStream(
-  Encoding codec,
-  Stream<List<int>> byteStream,
-) async {
-  final BytesBuilder builder = BytesBuilder(copy: false);
-  await for (final List<int> chunk in byteStream) {
-    builder.add(chunk);
+/// [holdIncompleteTail] 为 false（整段解码）时，末尾凑不齐的字节按坏字节处理；
+/// 为 true（增量解码）时不消费它们、也不报错，把「消费到哪儿」交回去，由
+/// [IncrementalDecodeSink] 留到下一个 chunk —— 一个汉字的两字节可能分属两块。
+///
+/// 文本写进调用方的缓冲、而不是返回字符串：严格模式下这里会抛 [FormatException]，
+/// 那时 [out] 里已经装着这段字节里坏字节**之前**解出来的内容，调用方决定要不要交出去
+/// （流式解码会交，整段解码抛了就什么都不留）。
+///
+/// [baseOffset] 会加到报错的偏移上，让流式解码报的是整个流里的绝对位置；[source]
+/// 只写进 [FormatException]（流没有一段连续字节可指，流式解码传 null）。
+int _decodeDoubles(
+  DoubleByteCodec codec,
+  List<int> input,
+  List<int>? lost,
+  Object? source,
+  int baseOffset,
+  bool holdIncompleteTail,
+  StringBuffer out,
+) {
+  final DoubleByteLayout layout = codec.layout;
+  int index = 0;
+  while (index < input.length) {
+    final int byte = input[index];
+    if (byte < 0x80) {
+      out.writeCharCode(byte);
+      index++;
+      continue;
+    }
+    if (layout.isLead(byte)) {
+      if (index + 1 >= input.length) {
+        // 首字节后面还没有字节：只有增量解码要等，整段解码到这里就是坏字节
+        if (holdIncompleteTail) break;
+      } else {
+        final int trail = input[index + 1];
+        if (layout.isTrail(trail) && layout.writeText(out, byte, trail)) {
+          index += 2;
+          continue;
+        }
+      }
+    }
+    writeInvalidByte(
+      encodingName: codec.name,
+      allowInvalid: codec.allowInvalid,
+      out: out,
+      lost: lost,
+      offset: baseOffset + index,
+      source: source,
+    );
+    index++;
   }
-  return codec.decode(builder.takeBytes());
+  return index;
+}
+
+/// 一个解不出来的字节怎么办：严格模式抛 [FormatException]，宽松模式记下偏移、
+/// 补一个 U+FFFD。
+///
+/// 双字节编码与 GB18030 两条解码循环共用这一处策略，免得两边语义各自漂移。
+void writeInvalidByte({
+  required String encodingName,
+  required bool allowInvalid,
+  required StringBuffer out,
+  required List<int>? lost,
+  required int offset,
+  required Object? source,
+}) {
+  if (!allowInvalid && lost == null) {
+    throw FormatException(
+      'Invalid $encodingName byte sequence',
+      source,
+      offset,
+    );
+  }
+  lost?.add(offset);
+  out.writeCharCode(0xFFFD);
+}
+
+/// 真增量解码的公共骨架：每来一块就解出能确定的部分，只把块尾不完整的序列留着。
+///
+/// 各编码的分块差异全在传进来的「解一段」函数里（[_decodeDoubles] / `_decodeGb18030`），
+/// 这里只负责跨块拼接、绝对偏移和收尾。
+///
+/// 与 0.1.2 的 `BufferedDecodeSink`（收齐整个流才解）的区别：文本边收边吐，内存只留
+/// 块尾那 1~3 个字节，长文件不必整段进内存。
+class IncrementalDecodeSink implements Sink<List<int>> {
+  IncrementalDecodeSink(this._decodePrefix, this._out);
+
+  /// 解一段：`(字节, 起始绝对偏移, 是否留住不完整的尾巴, 文本写哪儿) → 消费字节数`。
+  final int Function(
+    List<int> bytes,
+    int baseOffset,
+    bool hold,
+    StringBuffer out,
+  ) _decodePrefix;
+
+  final Sink<String> _out;
+
+  /// 上一块末尾还没凑齐的字节（双字节编码最多 1 个，GB18030 四字节形式最多 3 个）。
+  List<int> _pending = const <int>[];
+
+  /// [_pending] 第一个字节在整个流里的偏移。
+  int _pendingBase = 0;
+
+  bool _closed = false;
+
+  /// 已经报过一次致命错误，后续分块一律丢掉。
+  ///
+  /// `stream.transform(codec.decoder)` 抛出错误后**上游不会自动取消**：后面的 chunk 照样
+  /// 会送进来。而报错时那块字节没被消费掉，`_pending` 还停在报错前的位置，接着解就会拿
+  /// 过期的字节拼出本不该存在的字符（实测 `[0x41,0x81]` + `[0x20,0x42]` + `[0x43]` 会在
+  /// 报出偏移 1 之后多吐一个「丆」）。所以第一次抛错就停止消费。
+  bool _failed = false;
+
+  @override
+  void add(List<int> data) {
+    if (_closed) throw StateError('add() called after close()');
+    if (_failed || data.isEmpty) return;
+    // 绝大多数 chunk 不带上一块的尾巴，这时直接就地解，不做拷贝
+    final List<int> bytes =
+        _pending.isEmpty ? data : <int>[..._pending, ...data];
+    final StringBuffer out = StringBuffer();
+    final int used;
+    try {
+      used = _decodePrefix(bytes, _pendingBase, true, out);
+    } on FormatException {
+      _fail(out);
+      rethrow;
+    }
+    if (out.isNotEmpty) _out.add(out.toString());
+    _pendingBase += used;
+    _pending = used == bytes.length ? const <int>[] : bytes.sublist(used);
+  }
+
+  @override
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    if (!_failed && _pending.isNotEmpty) {
+      // 流结束了，这几个字节再等也没有下文 —— 按坏字节收尾（严格模式在这里抛）
+      final StringBuffer out = StringBuffer();
+      try {
+        _decodePrefix(_pending, _pendingBase, false, out);
+      } on FormatException {
+        _fail(out);
+        rethrow;
+      }
+      if (out.isNotEmpty) _out.add(out.toString());
+      _pending = const <int>[];
+    }
+    // 必须关掉下游，否则 Converter.bind 返回的 Stream 永远不结束（会挂住 await）。
+    _out.close();
+  }
+
+  /// 抛出致命错误时的收尾：坏字节**之前**已经解出来的文本照常交出去（与 `utf8` 解码器
+  /// 一致），然后停止消费后续分块。
+  void _fail(StringBuffer out) {
+    if (out.isNotEmpty) _out.add(out.toString());
+    _failed = true;
+    _pending = const <int>[];
+  }
 }
 
 class _DoubleByteDecoder extends Converter<List<int>, String> {
@@ -185,45 +336,22 @@ class _DoubleByteDecoder extends Converter<List<int>, String> {
 
   @override
   String convert(List<int> input) {
-    final DoubleByteLayout layout = _codec.layout;
     final StringBuffer out = StringBuffer();
-    int index = 0;
-    while (index < input.length) {
-      final int byte = input[index];
-      if (byte < 0x80) {
-        out.writeCharCode(byte);
-        index++;
-        continue;
-      }
-      if (index + 1 < input.length &&
-          layout.isLead(byte) &&
-          layout.isTrail(input[index + 1])) {
-        if (layout.writeText(out, byte, input[index + 1])) {
-          index += 2;
-          continue;
-        }
-      }
-      if (!_codec.allowInvalid && _lost == null) {
-        throw FormatException(
-          'Invalid ${_codec.name} byte sequence',
-          input,
-          index,
-        );
-      }
-      _lost?.add(index);
-      out.writeCharCode(0xFFFD);
-      index++;
-    }
+    _decodeDoubles(_codec, input, _lost, input, 0, false, out);
     return out.toString();
   }
 
-  /// 收齐所有分块后一次性解码，`close()` 时才把结果交给下游。
+  /// 增量解码：`decoder.bind(...)`、`stream.transform(codec.decoder)`、
+  /// `Encoding.decodeStream` 的默认实现都走这里。
   ///
-  /// 不实现这个方法的话 `decoder.bind(...)`、`stream.transform(codec.decoder)`
-  /// 会抛 `UnsupportedError`（`Converter` 的默认实现要求它）。
+  /// 不实现这个方法的话它们会抛 `UnsupportedError`（[Converter] 的默认实现要求它）。
   @override
   Sink<List<int>> startChunkedConversion(Sink<String> sink) =>
-      BufferedDecodeSink(convert, sink);
+      IncrementalDecodeSink(
+        (List<int> bytes, int baseOffset, bool hold, StringBuffer out) =>
+            _decodeDoubles(_codec, bytes, null, null, baseOffset, hold, out),
+        sink,
+      );
 }
 
 /// 取 [index] 处的码位（代理对合成一个）。`String` 没有现成的按索引取码位的 API。
@@ -271,46 +399,75 @@ class _DoubleByteEncoder extends Converter<String, List<int>> {
     return out;
   }
 
-  /// 逐块编码并转发。编码方向块间无状态（一个 chunk 就是一段完整字符串），
-  /// 不像解码那样要收齐再算。
+  /// 逐块编码并转发（见 [ChunkedEncodeSink]）。
   @override
   Sink<String> startChunkedConversion(Sink<List<int>> sink) =>
-      PerChunkEncodeSink(convert, sink);
+      ChunkedEncodeSink(convert, sink, _codec.layout.startsTwoUnitChar);
 }
 
-/// 把分块字节收齐、`close()` 时一次性转换的 sink（解码方向用）。
+/// 逐块编码并转发的 sink（编码方向用）。
 ///
-/// 解码必须这样：一个汉字的两个字节可能分属相邻两个 chunk，逐块解会散架。
-/// 它只保证 `decoder.bind(...)` / `transform(codec.decoder)` 能用，**不是**增量
-/// 解码 —— 真增量要各自维护 pending 字节，等有需求再说。
-class BufferedDecodeSink implements Sink<List<int>> {
-  BufferedDecodeSink(this._convert, this._out);
-
-  final String Function(List<int>) _convert;
-  final Sink<String> _out;
-  final BytesBuilder _bytes = BytesBuilder(copy: false);
-
-  @override
-  void add(List<int> data) => _bytes.add(data);
-
-  @override
-  void close() {
-    _out.add(_convert(_bytes.takeBytes()));
-    // 必须关掉下游，否则 Converter.bind 返回的 Stream 永远不结束（会挂住 await）。
-    _out.close();
-  }
-}
-
-/// 逐块转换并转发的 sink（编码方向用）。
-class PerChunkEncodeSink implements Sink<String> {
-  PerChunkEncodeSink(this._convert, this._out);
+/// 编码块间本来没有状态，唯一的例外是「一个字符占两个 code unit」：补充平面字符的
+/// **代理对**（Dart 字符串本身的规则），以及 Big5-HKSCS 那 4 个**组合字符**
+/// （`0x8862` → U+00CA U+0304，两码位一格，由 [DoubleByteLayout.startsTwoUnitChar]
+/// 判断）。`stream.transform(codec.encoder)` 完全可能把它们切在两块里，所以碰到块尾
+/// 是这类「前一半」时，先留一个 code unit 到下一块再一起编。
+class ChunkedEncodeSink implements Sink<String> {
+  ChunkedEncodeSink(this._convert, this._out, [this._startsTwoUnitChar]);
 
   final List<int> Function(String) _convert;
   final Sink<List<int>> _out;
 
-  @override
-  void add(String data) => _out.add(_convert(data));
+  /// 代理对之外「两单元才算一个字符」的判断，见 [DoubleByteLayout.startsTwoUnitChar]。
+  final bool Function(int codeUnit)? _startsTwoUnitChar;
+
+  /// 上一块末尾那个还没凑齐的 code unit（最多 1 个）。
+  String _pending = '';
+
+  bool _closed = false;
+
+  /// 已经报过一次致命错误，后续分块一律丢掉（理由同 [IncrementalDecodeSink._failed]：
+  /// 出错之后上游不会自动停）。
+  bool _failed = false;
 
   @override
-  void close() => _out.close();
+  void add(String data) {
+    if (_closed) throw StateError('add() called after close()');
+    if (_failed) return;
+    final String text = _pending.isEmpty ? data : _pending + data;
+    _pending = '';
+    if (text.isEmpty) return;
+    final int last = text.codeUnitAt(text.length - 1);
+    // 块尾可能是「一个字符的前一半」：代理对的高位，或 HKSCS 组合字符的第一个码位
+    if (last >= 0xD800 && last <= 0xDBFF ||
+        (_startsTwoUnitChar?.call(last) ?? false)) {
+      _pending = text.substring(text.length - 1);
+      // 整块就这半个字符：等下一块，先不编
+      if (text.length == 1) return;
+      _emit(text.substring(0, text.length - 1));
+      return;
+    }
+    _emit(text);
+  }
+
+  void _emit(String text) {
+    final List<int> bytes;
+    try {
+      bytes = _convert(text);
+    } on FormatException {
+      _failed = true;
+      _pending = '';
+      rethrow;
+    }
+    _out.add(bytes);
+  }
+
+  @override
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    // 孤零零的高位代理：与整段编码一致，抛 FormatException（这里让 convert 抛）
+    if (!_failed && _pending.isNotEmpty) _emit(_pending);
+    _out.close();
+  }
 }

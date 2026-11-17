@@ -1,12 +1,11 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'double_byte_codec.dart'
     show
-        BufferedDecodeSink,
+        ChunkedEncodeSink,
         DecodeReport,
-        PerChunkEncodeSink,
-        decodeWholeStream;
+        IncrementalDecodeSink,
+        writeInvalidByte;
 import 'gb_layout.dart';
 import 'tables.dart';
 
@@ -26,6 +25,11 @@ import 'tables.dart';
 /// 实现下分别是「真字符」和「PUA」。与 ICU 也有一处**有意分歧**：ICU 把那 18 个
 /// 四字节序列标成忽略，老文件里它们会解不出来；本包按国标做完整互换，它们仍解成
 /// 原来的 PUA 码位，往返也保得住。
+///
+/// 解码方向是**真增量**的：`decodeStream(...)`、`decoder.bind(...)`、
+/// `stream.transform(codec.decoder)` 每收到一块就把已经能确定的字符吐出去，只有块尾
+/// 凑不齐的那 1~3 个字节（四字节形式最多要等三个）留到下一块再算。严格模式下坏字节
+/// 可能在中途抛出，此前已经吐出的文本是完整可信的前缀。
 class Gb18030Codec extends Encoding {
   /// 创建一个 GB18030 编解码实例。
   ///
@@ -59,14 +63,6 @@ class Gb18030Codec extends Encoding {
   @override
   Converter<List<int>, String> get decoder => _Gb18030Decoder(this);
 
-  /// 把整个字节流读完再解码，结果等同 `decode(整段字节)`。
-  ///
-  /// 不是增量解码，好处是多字节字符被切在两个 chunk 之间也不受影响。
-  /// 内部实现见 [decodeWholeStream]。
-  @override
-  Future<String> decodeStream(Stream<List<int>> byteStream) =>
-      decodeWholeStream(this, byteStream);
-
   /// 宽松解码，并把「哪些字节被换成了 U+FFFD」一并报出来。
   ///
   /// 语义与 `DoubleByteCodec.decodeLossy` 相同，只是这里多一种四字节形式：
@@ -99,34 +95,74 @@ class _Gb18030Decoder extends Converter<List<int>, String> {
   @override
   String convert(List<int> input) {
     final StringBuffer out = StringBuffer();
-    int index = 0;
-    while (index < input.length) {
-      final int byte = input[index];
-      if (byte < 0x80) {
-        out.writeCharCode(byte);
-        index++;
-        continue;
-      }
-      if (isLeadByte(byte) && index + 1 < input.length) {
+    _decodeGb18030(_codec, input, _lost, input, 0, false, out);
+    return out.toString();
+  }
+
+  /// 增量解码：`decoder.bind(...)`、`stream.transform(codec.decoder)`、
+  /// `Encoding.decodeStream` 的默认实现都走这里。
+  @override
+  Sink<List<int>> startChunkedConversion(Sink<String> sink) =>
+      IncrementalDecodeSink(
+        (List<int> bytes, int baseOffset, bool hold, StringBuffer out) =>
+            _decodeGb18030(_codec, bytes, null, null, baseOffset, hold, out),
+        sink,
+      );
+}
+
+/// 解 GB18030 的一段字节，文本写进 [out]，返回消费掉的字节数。
+///
+/// [holdIncompleteTail] 为 true（增量解码）时，块尾「还差后面几个字节」的四字节形式
+/// 不消费也不报错，交给 [IncrementalDecodeSink] 等下一块；为 false（整段解码）时
+/// 一律按坏字节处理。其余参数含义同 `_decodeDoubles`。
+int _decodeGb18030(
+  Gb18030Codec codec,
+  List<int> input,
+  List<int>? lost,
+  Object? source,
+  int baseOffset,
+  bool holdIncompleteTail,
+  StringBuffer out,
+) {
+  int index = 0;
+  while (index < input.length) {
+    final int byte = input[index];
+    if (byte < 0x80) {
+      out.writeCharCode(byte);
+      index++;
+      continue;
+    }
+    if (isLeadByte(byte)) {
+      if (index + 1 >= input.length) {
+        // 首字节后面还没有字节：只有增量解码要等
+        if (holdIncompleteTail) break;
+      } else {
         final int second = input[index + 1];
         if (second >= 0x30 && second <= 0x39) {
-          // 第二个字节是数字 ⇒ 必须是四字节，后面接不上就算坏序列
-          if (index + 3 < input.length) {
-            final int third = input[index + 2];
-            final int fourth = input[index + 3];
-            if (isLeadByte(third) && fourth >= 0x30 && fourth <= 0x39) {
-              final int? codePoint = gb18030CodePointOfIndex(
-                ((byte - 0x81) * 10 + (second - 0x30)) * 1260 +
-                    (third - 0x81) * 10 +
-                    (fourth - 0x30),
-              );
-              if (codePoint != null) {
-                out.writeCharCode(codePoint);
-                index += 4;
-                continue;
+          // 第二个字节是数字 ⇒ 只能是四字节形式，缺一个字节都算坏序列
+          if (index + 2 >= input.length) {
+            if (holdIncompleteTail) break; // 第三字节还没来
+          } else if (isLeadByte(input[index + 2])) {
+            if (index + 3 >= input.length) {
+              if (holdIncompleteTail) break; // 第四字节还没来
+            } else {
+              final int fourth = input[index + 3];
+              if (fourth >= 0x30 && fourth <= 0x39) {
+                final int? codePoint = gb18030CodePointOfIndex(
+                  ((byte - 0x81) * 10 + (second - 0x30)) * 1260 +
+                      (input[index + 2] - 0x81) * 10 +
+                      (fourth - 0x30),
+                );
+                if (codePoint != null) {
+                  out.writeCharCode(codePoint);
+                  index += 4;
+                  continue;
+                }
               }
             }
           }
+          // 第三字节不是首字节 / 第四字节不是数字 / 序号解不出码位：
+          // 四字节形式不成立，落到下面的坏字节处理（只消费首字节）
         } else if (gb18030DoubleByteLayout.isTrail(second)) {
           final int? codePoint =
               gb18030DoubleByteLayout.codePointOf(byte, second);
@@ -137,24 +173,18 @@ class _Gb18030Decoder extends Converter<List<int>, String> {
           }
         }
       }
-      if (!_codec.allowInvalid && _lost == null) {
-        throw FormatException(
-          'Invalid gb18030 byte sequence',
-          input,
-          index,
-        );
-      }
-      _lost?.add(index);
-      out.writeCharCode(0xFFFD);
-      index++;
     }
-    return out.toString();
+    writeInvalidByte(
+      encodingName: codec.name,
+      allowInvalid: codec.allowInvalid,
+      out: out,
+      lost: lost,
+      offset: baseOffset + index,
+      source: source,
+    );
+    index++;
   }
-
-  /// 收齐所有分块后一次性解码，语义与 [decodeWholeStream] 一致。
-  @override
-  Sink<List<int>> startChunkedConversion(Sink<String> sink) =>
-      BufferedDecodeSink(convert, sink);
+  return index;
 }
 
 class _Gb18030Encoder extends Converter<String, List<int>> {
@@ -198,8 +228,8 @@ class _Gb18030Encoder extends Converter<String, List<int>> {
     return out;
   }
 
-  /// 逐块编码并转发（编码方向块间无状态）。
+  /// 逐块编码并转发（见 [ChunkedEncodeSink]）。
   @override
   Sink<String> startChunkedConversion(Sink<List<int>> sink) =>
-      PerChunkEncodeSink(convert, sink);
+      ChunkedEncodeSink(convert, sink);
 }

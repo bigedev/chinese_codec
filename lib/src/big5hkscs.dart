@@ -54,6 +54,15 @@ final ReverseCellMap hkscsBmpReverseMap = _buildBmpReverseMap();
 /// 「一个格子出两个 UTF-16 单元」，所以能用同一张反查表。
 final Map<int, int> hkscsExtendedReverseMap = _buildExtendedReverseMap();
 
+/// 「两单元一格」里第一个单元**不是代理**的那些（就是组合字符，`U+00CA` / `U+00EA`）。
+///
+/// 从 [hkscsExtendedReverseMap] 的键推出来：代理对（补充平面字符）由分块编码的通用
+/// 逻辑处理，这里只列组合字符的开头，供 [Big5HkscsLayout.startsTwoUnitChar] 用。
+final Set<int> hkscsCombiningFirstUnits = <int>{
+  for (final int key in hkscsExtendedReverseMap.keys)
+    if (key >> 16 < 0xD800) key >> 16,
+};
+
 /// Big5-HKSCS 编解码。
 ///
 /// 双字节，单字节部分只接受 ASCII。等价于 Big5 加香港增补字符集，覆盖 18,594 个
@@ -119,6 +128,14 @@ class Big5HkscsLayout extends DoubleByteLayout {
   @override
   bool isTrail(int byte) =>
       (byte >= 0x40 && byte <= 0x7E) || (byte >= 0xA1 && byte <= 0xFE);
+
+  /// 组合字符的第一个码位（`U+00CA` / `U+00EA`）：块尾只拿到它时不能编，要等下一块。
+  ///
+  /// 代理对由分块编码的通用逻辑管，这里只报「非代理、但也是两单元一格」的那些，名单
+  /// 从 [hkscsExtendedReverseMap] 的键里推出来，表改了不用同步改这里。
+  @override
+  bool startsTwoUnitChar(int codeUnit) =>
+      hkscsCombiningFirstUnits.contains(codeUnit);
 
   @override
   String? textOf(int lead, int trail) {

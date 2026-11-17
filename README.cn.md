@@ -39,6 +39,22 @@ final String text = File('legacy.bas').readAsStringSync(encoding: gbk);
 File('legacy.utf8.bas').writeAsStringSync(text);  // 写出 UTF-8
 ```
 
+文件大、不想整段读进内存时用流式解码。它是**真增量**的：每读到一块就把已经能确定的字符
+交出来，只有块尾那 1~3 个「还判断不了」的字节留到下一块（一个汉字的两字节、GB18030 的
+四字节序列都可能被切在两块之间）：
+
+```dart
+final String text = await gbk.decodeStream(file.openRead());
+// 同样增量的另一种写法，方便接在别的 Stream 上，或顺手 map / filter
+final String same = await file.openRead().transform(gbk.decoder).join();
+```
+
+块边界不影响结果，也不占内存：解出来的文本与 `decode(整个文件)` 逐字符相同。严格模式下
+坏字节可能在中途抛出，此时已经交出的文本是完整的前缀 —— 包括报错那一块里坏字节之前的
+部分，永远停在字符边界上，不会出现半个字；报错之后这条流不再产出文本。
+`FormatException.offset` 是整个流里的字节位置。要「尽量全读出来、再看坏在哪」用下面的
+`decodeLossy`。
+
 怀疑内容不干净、想「尽量读出来」时：
 
 ```dart

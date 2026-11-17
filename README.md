@@ -41,6 +41,25 @@ final String text = File('legacy.bas').readAsStringSync(encoding: gbk);
 File('legacy.utf8.bas').writeAsStringSync(text);  // written back as UTF-8
 ```
 
+For files too large to hold in memory, decode them as a stream. This is **genuinely
+incremental**: text is handed over as each chunk arrives, and only the 1–3 trailing bytes that
+cannot be decided yet are held back (the two bytes of a Chinese character, or a GB18030
+four-byte sequence, may well straddle two chunks):
+
+```dart
+final String text = await gbk.decodeStream(file.openRead());
+// the same, written as a transform — handy to attach to another Stream, or to map / filter
+final String same = await file.openRead().transform(gbk.decoder).join();
+```
+
+Chunk boundaries do not change the result and do not cost memory: the text is character-for-
+character identical to `decode(wholeFile)`. In strict mode a bad byte may surface mid-stream;
+everything decoded before it is delivered — including the part of the failing chunk that
+precedes the bad byte — and it always stops on a character boundary, never half a character.
+After the error the stream yields no further text, and `FormatException.offset` is a byte
+offset into the whole stream. To read as much as possible *and* learn where it went wrong,
+use `decodeLossy` below.
+
 When the content looks unclean and reading *something* matters more than strictness:
 
 ```dart
