@@ -12,10 +12,23 @@ Flutter（含鸿蒙 / 安卓）通用。
 早期 Windows 上的源码与配置）只能得到 `FormatException`，或者被当成 Latin-1 读成一堆
 乱码 —— 后者更糟，因为它「没报错」。
 
+## 安装
+
+```bash
+dart pub add chinese_codec
+```
+
+这条命令会把依赖写进 `pubspec.yaml`，约束按 pub.dev 上的最新版自动填。手工加也行：在
+`dependencies` 里写 `chinese_codec`，约束按工程需要自己定。
+
+`dart pub get` 之后就能用；Flutter 工程（含鸿蒙 / 安卓 / iOS）也只是一次普通依赖，不需要
+额外配置。
+
 ## 用法
 
+### 基本编解码
+
 ```dart
-import 'dart:convert';
 import 'package:chinese_codec/chinese_codec.dart';
 
 void main() {
@@ -31,13 +44,18 @@ void main() {
 }
 ```
 
-五种编码都是 `Encoding` 的子类，所以能直接当 `File.readAsString(encoding:)` /
+五种编码都是 `Encoding` 的子类（`Encoding` 已由本包转出，写 `List<Encoding>` 时不必再
+`import 'dart:convert'`），所以能直接当 `File.readAsString(encoding:)` /
 `File.writeAsString(encoding:)` 的参数：
 
 ```dart
+import 'dart:io';
+
 final String text = File('legacy.bas').readAsStringSync(encoding: gbk);
 File('legacy.utf8.bas').writeAsStringSync(text);  // 写出 UTF-8
 ```
+
+### 文件与流
 
 文件大、不想整段读进内存时用流式解码。它是**真增量**的：每读到一块就把已经能确定的字符
 交出来，只有块尾那 1~3 个「还判断不了」的字节留到下一块（一个汉字的两字节、GB18030 的
@@ -49,17 +67,18 @@ final String text = await gbk.decodeStream(file.openRead());
 final String same = await file.openRead().transform(gbk.decoder).join();
 ```
 
-块边界不影响结果，也不占内存：解出来的文本与 `decode(整个文件)` 逐字符相同。严格模式下
-坏字节可能在中途抛出，此时已经交出的文本是完整的前缀 —— 包括报错那一块里坏字节之前的
-部分，永远停在字符边界上，不会出现半个字；报错之后这条流不再产出文本。
-`FormatException.offset` 是整个流里的字节位置。要「尽量全读出来、再看坏在哪」用下面的
-`decodeLossy`。
+结果与 `decode(整个文件)` 逐字符相同，内存只占块尾那几个字节。严格模式下坏字节可能在中途
+抛出：此时已交出的文本是完整的前缀 —— 包括报错那一块里坏字节之前的部分，永远停在字符边界
+上，不会出现半个字；报错之后这条流不再产出文本。`FormatException.offset` 是整个流里的
+字节位置。
 
-怀疑内容不干净、想「尽量读出来」时：
+### 读不干净的数据
+
+只想「尽量读出来」时用 `allowInvalid`（坏字节 → U+FFFD，与 `utf8` 的 `allowMalformed` 同义）：
 
 ```dart
 const GbkCodec lenient = GbkCodec(allowInvalid: true);
-final String text = lenient.decode(bytes);  // 坏字节 → U+FFFD，与 utf8 allowMalformed 同义
+final String text = lenient.decode(bytes);  // 坏字节 → U+FFFD
 ```
 
 既要读出来、又想知道**坏在哪**时用 `decodeLossy` —— 它宽松解码，并给出每个被替换
@@ -73,13 +92,19 @@ if (!report.isClean) {
 }
 ```
 
-按名字取（认 `CP936`、`EUC-CN`、`CP950` 这类别名，常用于解析 MIME / git 配置）：
+### 按名字取
+
+认 `CP936`、`EUC-CN`、`CP950` 这类别名，常用于解析 MIME / git 配置；大小写不敏感，首尾
+空白会被去掉：
 
 ```dart
-chineseEncodingByName('cp936');      // GbkCodec
-chineseEncodingByName('euc-cn');     // Gb2312Codec
-chineseEncodingByName('cp950');      // Big5Codec
-chineseEncodingByName('big5-hkscs'); // Big5HkscsCodec
+chineseEncodingByName('cp936');      // → gbk（GbkCodec 实例）
+chineseEncodingByName('euc-cn');     // → gb2312
+chineseEncodingByName('cp950');      // → big5
+chineseEncodingByName('big5-hkscs'); // → big5hkscs
+chineseEncodingByName('shift_jis');  // → null（不认识的编码）
+
+identical(chineseEncodingByName(' cp936 '), gbk);  // true：返回共享实例，可直接比身份
 ```
 
 ## 覆盖范围
@@ -87,22 +112,34 @@ chineseEncodingByName('big5-hkscs'); // Big5HkscsCodec
 | 编码 | 单字节 | 双字节 | 四字节 | 说明 |
 |---|---|---|---|---|
 | GB2312 | ASCII | ✓（7,445 个字符） | ✗ | 最老的国标，GBK 的真子集 |
-| GBK（CP936） | ASCII | ✓（21,791 个格子） | ✗ | Windows 上最常见的简体 |
-| GB18030 | ASCII | ✓（23,940 个格子，含 GBK 不收的用户自定义区） | ✓ | BMP 补齐 + U+10000..U+10FFFF |
-| Big5（CP950） | ASCII | ✓（13,752 个格子） | ✗ | 繁体；Windows 上最常见 |
-| Big5-HKSCS | ASCII | ✓（18,594 个格子，含 CP950 的全部 13,752 格） | ✗ | 繁体；香港增补字符集，含 1,713 个补充平面码位 |
+| GBK（CP936） | ASCII | ✓（21,791 个字符） | ✗ | Windows 上最常见的简体 |
+| GB18030 | ASCII | ✓（23,940 个字符，含 GBK 不收的用户自定义区） | ✓ | BMP 补齐 + U+10000..U+10FFFF |
+| Big5（CP950） | ASCII | ✓（13,742 个字符） | ✗ | 繁体；Windows 上最常见 |
+| Big5-HKSCS | ASCII | ✓（18,494 个字符，含 CP950 的全部 13,742 个） | ✗ | 繁体；香港增补字符集，含 1,713 个补充平面码位 |
+
+表的计数按**字符**：同一字符占多个字节对时只算一次（Big5 的 `十` / `卅` 等共 10 个重复
+字节对），Big5-HKSCS 那 4 个组合字符则是「一个字节对出两个字符」，所以它的 18,594 个
+字节对对应 18,494 个字符。下文讲表结构时说的「格子」指的只是双字节位置本身。
 
 判定建议：**先试 UTF-8，失败再用往返校验确认中文编码**。覆盖面大的编码「能解」不等于
 「解对了」—— 一段随机字节也可能被成功解成生僻字（或者合法但完全错误的字）。
 
 ```dart
-final String? utf8Text = tryDecode(bytes, utf8);
-if (utf8Text != null) return utf8Text;
+import 'dart:convert';  // 只为 utf8；中文编码都在本包里
 
-final List<Encoding> fits = codecsThatRoundTrip(bytes);
-// 0 条：既不是 UTF-8，也不是任何中文编码（截断 / 二进制 / 别的字符集）
-// 1 条：就是它（GB18030 的四字节序列落在这一类）
-// 多条：字节空间重叠，由业务决定
+String readLegacy(List<int> bytes) {
+  final String? utf8Text = tryDecode(bytes, utf8);
+  if (utf8Text != null) return utf8Text;
+
+  final List<Encoding> fits = codecsThatRoundTrip(bytes);
+  // 0 条：既不是 UTF-8，也不是任何中文编码（截断 / 二进制 / 别的字符集）
+  // 1 条：就是它（GB18030 的四字节序列落在这一类）
+  // 多条：字节空间重叠，由业务决定 —— 下面这里按 chineseCodecs 的顺序取第一个
+  if (fits.isEmpty) {
+    throw const FormatException('既不是 UTF-8，也不是任何中文编码');
+  }
+  return fits.first.decode(bytes);
+}
 ```
 
 `codecsThatRoundTrip` 给的是**证据，不是猜测**：它只报告哪些编码能解开这段字节、
@@ -136,7 +173,10 @@ if (missing.isNotEmpty) {
     不动「字节 ↔ 码位」映射（ICU 的 2022 数据同样保留 `FD9C` → U+F92C 等映射），
     所以本包不受影响。
 - **Big5 实现的是 CP950**（Windows 繁体中文的实际上限），比经典 Big5 多 42 个格子
-  （例如 `0xA3E1` 是「€」）、另有 11 个格子映射到不同码位。
+  （例如 `0xA3E1` 是「€」）、另有 11 个格子映射到不同码位。交叉核对的口径：与 CPython
+  的 `cp950` 在全部 13,752 格上逐格一致；macOS `iconv` 的 CP950 不认 ETen 扩展区的
+  249 格（`0xC6A1`-`0xC7FE`，假名 / 俄文 / 希腊字母），其余 13,503 格与本包逐格相同。
+  比期望值时别拿 CPython 的 `big5` 当 CP950 基准，它用的是老的 BIG5.TXT 表。
 - **Big5-HKSCS 与 CP950 不是包含关系**：格子是它的超集（CP950 的 13,752 格全都在），
   但 **250 格映射不同** —— HKSCS 把 ETen 扩展的假名、俄文、希腊字母区
   （`0xC6A1`-`0xC8FE` 等）拿去放汉字与带圈数字，例如 `0xC6A1` 在 CP950 是「ヾ」、
@@ -146,16 +186,14 @@ if (missing.isNotEmpty) {
 - Big5-HKSCS 有 4 个格子是「一个字节对换两个码位」的组合字符（`0x8862` → U+00CA + U+0304
   这类带声调拉丁字母）：解码会得到两个字符，编码时按这两个码位的组合整体匹配、仍编回
   同一格。所以按「字符数 == 字节数 / 2」统计在这种文本上不成立。
-- Big5-HKSCS 的数据取自 WHATWG 的 `index-big5.txt`（Big5 + HKSCS-2008，18,590 格）
-  加规范正文单独定义的 4 个组合字符，共 18,594 格。CPython 的 `big5hkscs` 有 18,402 格，
-  **全部包含在本包内**；本包另有 192 格（`0xA3E1` 的「€」、`0x877B` 的 U+21D53 等
-  HKSCS-2008 之后才补的字符）。
+- Big5-HKSCS 的 18,594 格里包含 CPython `big5hkscs` 的全部 18,402 格；本包另有 192 格
+  （`0xA3E1` 的「€」、`0x877B` 的 U+21D53 等 HKSCS-2008 之后才补的字符）。数据来源见
+  最后一节。
 - GB2312 里有两个格子与 GBK / GB18030 映射到不同码位（历史遗留）：
   `0xA1A4` 是「・」(U+30FB)、`0xA1AA` 是「―」(U+2015)。所以 `U+00B7` 在 GB2312 下
   不可表示 —— 这是国标本身的不一致，不是本包的偏差。
-- 不做编码**探测**，只给证据：`tryDecode` / `verifyRoundTrip` / `codecsThatRoundTrip`
-  会告诉你哪些编码**能**解释这段字节，但不会排序、不会替你选。字节空间本来就是重叠的，
-  普通简体文本按 Big5 也能通过 —— 猜错比报错更难查，选择权留给调用方（见上面的「覆盖范围」）。
+- 不做编码**探测**，只给证据：`tryDecode` / `verifyRoundTrip` / `codecsThatRoundTrip` 只
+  说明哪些编码**能**解释这段字节，不排序、不替你选（理由见上面的「覆盖范围」）。
 
 ## 实现与体积
 
@@ -176,11 +214,12 @@ if (missing.isNotEmpty) {
   用 0xFFFF 当哨兵、转到附加表。反查表都在首次编码时构建。
 
 生成结果约 192 KB 源码（`tables.g.dart` 123 KB + `tables_big5hkscs.g.dart` 69 KB），
-各表首次使用时 lazy 解码；只用其中一种编码也只付一次代价。
+各表首次使用时 lazy 解码；只用其中一种编码也只付一次代价。解码吞吐（AOT、1 MB 语料、
+8 KB 分块）GBK 约 96 MB/s —— 全表走的是同一套 `writeCharCode` 热路径。
 
-改了生成脚本后务必 `dart test`：单测对**全表**做了往返校验（GBK 21,791、GB2312 7,445、
-GB18030 双字节 23,940 + BMP 四字节 39,420、Big5 13,752、Big5-HKSCS 18,594），
-能抓住写错一位。
+改了生成脚本后务必 `dart test`：单测对**全表**做了往返校验（都按字节对计，含重复格：
+GBK 21,791、GB2312 7,445、GB18030 双字节 23,940 + BMP 四字节 39,420、Big5 13,752、
+Big5-HKSCS 18,594），能抓住写错一位。
 
 ## 数据来源与许可
 

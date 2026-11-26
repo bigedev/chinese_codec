@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:chinese_codec/chinese_codec.dart';
 
@@ -35,6 +36,8 @@ void checkExportable(String text, Encoding target) {
 
 Future<void> main() async {
   // ---- 1. 基本编解码 ----
+  print('\n[1] 基本编解码：');
+
   // 「中文」在 GBK / GB18030 / GB2312 下都是这两个双字节
   const List<int> simplified = <int>[0xd6, 0xd0, 0xce, 0xc4];
   print(gbk.decode(simplified)); // 中文
@@ -51,9 +54,15 @@ Future<void> main() async {
   print(fourByte); // [144, 48, 129, 48]
   print(gb18030.decode(fourByte) == '\u{10000}'); // true
 
-  // 按名字取，认别名
-  print(chineseEncodingByName('cp936')); // GbkCodec
-  print(chineseEncodingByName('big5-hkscs')); // Big5HkscsCodec
+  // 按名字取，认别名；不认识返回 null
+  print(chineseEncodingByName('cp936')); // gbk（GbkCodec 实例）
+  print(chineseEncodingByName('big5-hkscs')); // big5-hkscs
+  print(chineseEncodingByName('shift_jis')); // null
+
+  // 同一个字节对在两套繁体编码里是不同的字：CP950 是「ヾ」、HKSCS 是「①」。
+  // 用错了不会报错，只是个别字不对 —— 所以要按来源选编码，不是「谁大用谁」。
+  print(big5.decode(<int>[0xc6, 0xa1])); // ヾ
+  print(big5hkscs.decode(<int>[0xc6, 0xa1])); // ①
 
   // ---- 2. 这段字节是什么编码 ----
   print('\n[2] 不知道编码时：');
@@ -68,14 +77,23 @@ Future<void> main() async {
   print('  简体字节按 Big5：${big5.decode(simplified)}，'
       '回环 ${verifyRoundTrip(simplified, big5)}');
 
-  // ---- 3. 读得出来，但坏在哪 ----
-  print('\n[3] 宽松解码并定位坏字节：');
-  final DecodeReport report = GbkCodec().decodeLossy(<int>[
-    0x61,
-    0xff,
-    0x62,
-    0xa4,
-  ]);
+  // ---- 3. 坏字节的三种处理 ----
+  print('\n[3] 遇到坏字节：');
+
+  final List<int> broken = <int>[0x61, 0xff, 0x62, 0xa4];
+
+  // 默认严格：抛 FormatException，offset 是坏字节在输入里的位置
+  try {
+    gbk.decode(broken);
+  } on FormatException catch (e) {
+    print('  严格模式：${e.message} @ ${e.offset}'); // Invalid gbk byte sequence @ 1
+  }
+
+  // 只想「尽量读出来」：坏字节换成 U+FFFD，与 utf8 的 allowMalformed 同义
+  print('  宽松模式：${const GbkCodec(allowInvalid: true).decode(broken)}'); // a�b�
+
+  // 还想知道坏在哪：decodeLossy 给出每个被替换字节的偏移
+  final DecodeReport report = GbkCodec().decodeLossy(broken);
   print('  文本：${report.text}'); // a�b�
   print('  丢了 ${report.lostBytes} 个字节，位置 ${report.lostOffsets}'); // [1, 3]
   print('  干净吗：${report.isClean}'); // false
@@ -124,4 +142,36 @@ Future<void> main() async {
   await input.close();
   await subscription.cancel();
   print('  共收到 ${picked.length} 段、拼起来 ${picked.join().length} 个字符');
+
+  // ---- 7. 写回老文件：编码方向 ----
+  print('\n[7] 编码方向（写回文件）：');
+
+  // 编不出来的字符总是抛 FormatException —— allowInvalid 只管解码，不会凭空造字
+  try {
+    gbk.encode('中文 𣲷');
+  } on FormatException catch (e) {
+    print('  严格编码：${e.message}'); // U+23CB7 is not representable in gbk
+  }
+
+  // 真正落盘：readAsString / writeAsString 直接吃 Encoding，不必自己转字节
+  final Directory dir = Directory.systemTemp.createTempSync('chinese_codec_');
+  try {
+    final File legacy = File('${dir.path}/legacy.txt');
+    legacy.writeAsStringSync('中文 abc', encoding: gbk);
+    print('  写出的字节：${legacy.readAsBytesSync()}');
+    print('  再读回来：${legacy.readAsStringSync(encoding: gbk)}');
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+
+  // 编码方向同样能分块：字符被切成两块时，半个代理对会留到下一块再一起编
+  const String supplementary = '\u{20000}'; // 代理对，GB18030 编成四字节
+  final List<int> straight = gb18030.encode('A$supplementary B');
+  final List<List<int>> parts = await Stream<String>.fromIterable(<String>[
+    'A${supplementary.substring(0, 1)}', // 结尾是高位代理
+    '${supplementary.substring(1)} B', // 开头是低位代理
+  ]).transform(gb18030.encoder).toList();
+  final List<int> pieced = parts.expand((List<int> part) => part).toList();
+  print('  切开代理对再拼：${pieced.join(',')}');
+  print('  与整段编码一致：${pieced.join(',') == straight.join(',')}');
 }

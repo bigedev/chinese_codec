@@ -2,6 +2,28 @@
 
 [简体中文](https://github.com/bigedev/chinese_codec/blob/main/CHANGELOG.cn.md) | **English**
 
+## 0.1.4
+
+Documentation and example only — no API, mapping or behaviour changes. Upgrade to get the docs.
+
+- **An `Install` section.** `dart pub add chinese_codec`, plus the reminder that a Flutter project
+  needs nothing beyond the dependency.
+- **A snippet that could not compile is fixed.** The "try UTF-8, then a Chinese codec" example
+  was a bare `return` at top level; it is now a complete `readLegacy(bytes)` function.
+- **Usage is split into subsections** — basic decoding/encoding, files and streams, reading
+  unclean data, lookup by name — so the page can be navigated instead of scrolled.
+- **Coverage counts are now characters, not cells**: Big5 13,742 and Big5-HKSCS 18,494, because
+  ten Big5 cells duplicate a character and the four HKSCS combining characters put two
+  characters in one cell. GBK 21,791 / GB2312 7,445 / GB18030 23,940 are unchanged.
+- **Duplicated passages removed** (incremental decoding, "no detection", HKSCS data sources) and
+  the README no longer pins a version number, so it stays correct across releases.
+- **Cross-check wording corrected**: Big5 matches CPython's `cp950` on all 13,752 cells, but
+  macOS `iconv`'s CP950 does not accept the 249 ETen extension cells — so the docs now state
+  the 13,503-cell intersection instead of claiming a full match with both references.
+- **The example now shows the error side**: strict `FormatException` with its byte offset,
+  `allowInvalid`, the CP950-vs-HKSCS cell conflict (`0xC6A1` → ヾ / ①), writing and re-reading a
+  GBK file, and chunked encoding of a surrogate pair split across two chunks.
+
 ## 0.1.3
 
 - **Four helpers for the "what encoding is this file?" question** — the answer is evidence,

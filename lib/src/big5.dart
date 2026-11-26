@@ -39,9 +39,12 @@ const Map<int, int> big5CanonicalCells = <int, int>{
 /// （例如 `0xA3E1` 是「€」）、另有 11 个格子映射到不同码位。Windows 存的繁体文件
 /// 基本都是这个变体。
 ///
-/// 这 11 格与 CPython 的 `big5` **不同**（Python 用的是老的 BIG5.TXT 表），与
-/// macOS iconv 的 `CP950` 逐格一致 —— 拿 `A145` 举例：这里是「‧」(U+2027)、
-/// Python 给「•」(U+2022)。要比对期望值时别拿 CPython 的 `big5` 当 CP950 基准。
+/// 这 11 格与 CPython 的 `big5` **不同**（Python 用的是老的 BIG5.TXT 表）—— 拿 `A145`
+/// 举例：这里是「‧」(U+2027)、Python 给「•」(U+2022)。要比对期望值时别拿 CPython 的
+/// `big5` 当 CP950 基准，用它的 `cp950`：本包与 `cp950` 在全部 13,752 格上逐格一致。
+///
+/// macOS 的 `iconv` 另有出入：它的 `CP950` 不认 ETen 扩展区那 249 格
+/// （`0xC6A1`-`0xC7FE`，假名 / 俄文 / 希腊字母），其余 13,503 格与本包逐格相同。
 ///
 /// 编码方向对「一个码位占两格」的 10 个码位有规范格偏好（见 [big5CanonicalCells]），
 /// 目的是和 Windows 写出来的字节一致。

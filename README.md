@@ -14,10 +14,24 @@ Flutter (HarmonyOS / Android included).
 `FormatException` or — worse — get read as Latin-1 and turn into garbage without any
 error at all.
 
+## Install
+
+```bash
+dart pub add chinese_codec
+```
+
+The command writes the dependency into `pubspec.yaml` and fills in the constraint from the
+latest version on pub.dev. Adding it by hand works too: list `chinese_codec` under
+`dependencies` and pick the constraint your project needs.
+
+It works right after `dart pub get`; in a Flutter project (HarmonyOS / Android / iOS) it is
+just an ordinary dependency with no extra setup.
+
 ## Usage
 
+### Basic decoding and encoding
+
 ```dart
-import 'dart:convert';
 import 'package:chinese_codec/chinese_codec.dart';
 
 void main() {
@@ -33,13 +47,18 @@ void main() {
 }
 ```
 
-All five codecs extend `Encoding`, so they can be passed straight to
+All five codecs extend `Encoding` (`Encoding` itself is re-exported by this package, so writing
+`List<Encoding>` needs no `import 'dart:convert'`), so they can be passed straight to
 `File.readAsString(encoding:)` / `File.writeAsString(encoding:)`:
 
 ```dart
+import 'dart:io';
+
 final String text = File('legacy.bas').readAsStringSync(encoding: gbk);
 File('legacy.utf8.bas').writeAsStringSync(text);  // written back as UTF-8
 ```
+
+### Files and streams
 
 For files too large to hold in memory, decode them as a stream. This is **genuinely
 incremental**: text is handed over as each chunk arrives, and only the 1–3 trailing bytes that
@@ -52,19 +71,20 @@ final String text = await gbk.decodeStream(file.openRead());
 final String same = await file.openRead().transform(gbk.decoder).join();
 ```
 
-Chunk boundaries do not change the result and do not cost memory: the text is character-for-
-character identical to `decode(wholeFile)`. In strict mode a bad byte may surface mid-stream;
-everything decoded before it is delivered — including the part of the failing chunk that
-precedes the bad byte — and it always stops on a character boundary, never half a character.
-After the error the stream yields no further text, and `FormatException.offset` is a byte
-offset into the whole stream. To read as much as possible *and* learn where it went wrong,
-use `decodeLossy` below.
+The result is character-for-character identical to `decode(wholeFile)`, and memory holds only
+those trailing bytes. In strict mode a bad byte may surface mid-stream: everything decoded
+before it is delivered — including the part of the failing chunk that precedes the bad byte —
+and it always stops on a character boundary, never half a character. After the error the stream
+yields no further text, and `FormatException.offset` is a byte offset into the whole stream.
 
-When the content looks unclean and reading *something* matters more than strictness:
+### Reading unclean data
+
+When reading *something* matters more than strictness, pass `allowInvalid` (bad bytes become
+U+FFFD, the same as `utf8` with `allowMalformed`):
 
 ```dart
 const GbkCodec lenient = GbkCodec(allowInvalid: true);
-final String text = lenient.decode(bytes);  // invalid bytes → U+FFFD, same as utf8 allowMalformed
+final String text = lenient.decode(bytes);  // invalid bytes → U+FFFD
 ```
 
 Reading *something* **and** knowing where it went wrong — `decodeLossy` reports the offset
@@ -78,14 +98,19 @@ if (!report.isClean) {
 }
 ```
 
-Lookups by name (knows aliases such as `CP936`, `EUC-CN`, `CP950` — handy for MIME types and
-git config):
+### Lookup by name
+
+Knows aliases such as `CP936`, `EUC-CN` and `CP950` — handy for MIME types and git config. The
+lookup is case-insensitive and trims surrounding whitespace:
 
 ```dart
-chineseEncodingByName('cp936');      // GbkCodec
-chineseEncodingByName('euc-cn');     // Gb2312Codec
-chineseEncodingByName('cp950');      // Big5Codec
-chineseEncodingByName('big5-hkscs'); // Big5HkscsCodec
+chineseEncodingByName('cp936');      // → gbk (a GbkCodec)
+chineseEncodingByName('euc-cn');     // → gb2312
+chineseEncodingByName('cp950');      // → big5
+chineseEncodingByName('big5-hkscs'); // → big5hkscs
+chineseEncodingByName('shift_jis');  // → null (unknown encoding)
+
+identical(chineseEncodingByName(' cp936 '), gbk);  // true — shared instances, safe to compare
 ```
 
 ## Coverage
@@ -93,23 +118,37 @@ chineseEncodingByName('big5-hkscs'); // Big5HkscsCodec
 | Encoding | Single byte | Double byte | Four byte | Notes |
 |---|---|---|---|---|
 | GB2312 | ASCII | ✓ (7,445 characters) | ✗ | The oldest national standard, a strict subset of GBK |
-| GBK (CP936) | ASCII | ✓ (21,791 cells) | ✗ | The most common Simplified Chinese on Windows |
-| GB18030 | ASCII | ✓ (23,940 cells, including the user-defined area GBK rejects) | ✓ | Fills in the BMP + U+10000..U+10FFFF |
-| Big5 (CP950) | ASCII | ✓ (13,752 cells) | ✗ | Traditional Chinese; the most common on Windows |
-| Big5-HKSCS | ASCII | ✓ (18,594 cells, including all 13,752 of CP950) | ✗ | Traditional Chinese; HKSCS, includes 1,713 supplementary-plane code points |
+| GBK (CP936) | ASCII | ✓ (21,791 characters) | ✗ | The most common Simplified Chinese on Windows |
+| GB18030 | ASCII | ✓ (23,940 characters, including the user-defined area GBK rejects) | ✓ | Fills in the BMP + U+10000..U+10FFFF |
+| Big5 (CP950) | ASCII | ✓ (13,742 characters) | ✗ | Traditional Chinese; the most common on Windows |
+| Big5-HKSCS | ASCII | ✓ (18,494 characters, including all 13,742 of CP950) | ✗ | Traditional Chinese; HKSCS, includes 1,713 supplementary-plane code points |
+
+The counts are **characters**: a character that occupies several byte pairs counts once (the 10
+duplicate byte pairs in Big5 such as `十` / `卅`), while the four Big5-HKSCS combining characters
+put two characters in one byte pair — so its 18,594 byte pairs correspond to 18,494 characters.
+"Cell", used later when describing the tables, means the double-byte position itself.
 
 Suggested order: **try UTF-8 first, then a Chinese codec confirmed by a round trip**.
 A wide encoding that *can* decode a byte sequence has not necessarily decoded it
 *correctly* — random bytes may still come out as rare characters (or as valid ones).
 
 ```dart
-final String? utf8Text = tryDecode(bytes, utf8);
-if (utf8Text != null) return utf8Text;
+import 'dart:convert';  // only for utf8; the Chinese codecs come from this package
 
-final List<Encoding> fits = codecsThatRoundTrip(bytes);
-// 0 candidates: neither UTF-8 nor any Chinese charset (truncated / binary / other)
-// 1 candidate : that is your answer (GB18030 four-byte sequences land here)
-// several     : the byte spaces overlap — the call is yours
+String readLegacy(List<int> bytes) {
+  final String? utf8Text = tryDecode(bytes, utf8);
+  if (utf8Text != null) return utf8Text;
+
+  final List<Encoding> fits = codecsThatRoundTrip(bytes);
+  // 0 candidates: neither UTF-8 nor any Chinese charset (truncated / binary / other)
+  // 1 candidate : that is your answer (GB18030 four-byte sequences land here)
+  // several     : the byte spaces overlap — the call is yours; this takes the first
+  //               in chineseCodecs order
+  if (fits.isEmpty) {
+    throw const FormatException('neither UTF-8 nor any Chinese charset');
+  }
+  return fits.first.decode(bytes);
+}
 ```
 
 `codecsThatRoundTrip` is **evidence, not a guess**: it reports which encodings decode the
@@ -149,7 +188,10 @@ if (missing.isNotEmpty) {
     keeps mappings such as `FD9C` → U+F92C), so this package is unaffected.
 - **Big5 means CP950** here (the de facto ceiling of Traditional Chinese on Windows): 42 cells
   more than classic Big5 (for example `0xA3E1` is "€"), plus 11 cells mapping to different
-  code points.
+  code points. On the cross-check: all 13,752 cells match CPython's `cp950` exactly, while
+  macOS `iconv`'s CP950 does not accept the 249 ETen extension cells (`0xC6A1`-`0xC7FE`, kana /
+  Cyrillic / Greek) — the remaining 13,503 cells match this package cell for cell. Expectation
+  values should not be taken from CPython's `big5`, which uses the old BIG5.TXT table.
 - **Big5-HKSCS is not a superset relationship**: its cells are a superset of CP950 (all 13,752
   cells are present), but **250 cells map differently** — HKSCS repurposes the ETen extension
   area of kana, Cyrillic and Greek (`0xC6A1`-`0xC8FE` and friends) for Han characters and
@@ -162,20 +204,16 @@ if (missing.isNotEmpty) {
   (`0x8862` → U+00CA + U+0304, accented Latin letters of that kind): decoding yields two
   characters, and encoding matches the pair of code points as a whole and produces the same
   cell. So "character count == byte count / 2" does not hold for such text.
-- Big5-HKSCS data comes from WHATWG's `index-big5.txt` (Big5 + HKSCS-2008, 18,590 cells) plus
-  the 4 combining characters defined separately in the specification body, 18,594 cells in
-  total. CPython's `big5hkscs` has 18,402 cells, **all of them included here**; this package
-  has 192 more (`0xA3E1`'s "€", `0x877B`'s U+21D53 and other characters added after
-  HKSCS-2008).
+- Of the 18,594 Big5-HKSCS cells, **all 18,402** of CPython's `big5hkscs` are included; this
+  package has 192 more (`0xA3E1`'s "€", `0x877B`'s U+21D53 and other characters added after
+  HKSCS-2008). Data sources are listed in the last section.
 - Two GB2312 cells map to different code points than GBK / GB18030 (a historical leftover):
   `0xA1A4` is "・" (U+30FB) and `0xA1AA` is "―" (U+2015). `U+00B7` is therefore not
   representable in GB2312 — an inconsistency of the standard itself, not a deviation of this
   package.
 - No encoding **detection**, only evidence: `tryDecode` / `verifyRoundTrip` /
-  `codecsThatRoundTrip` tell you which encodings *can* explain a byte sequence, but nothing
-  ranks them or picks one. Overlapping byte spaces mean ordinary Simplified text also passes
-  as valid (but wrong) Big5 — a wrong automatic guess is harder to debug than an error, so
-  the decision stays with the caller (see Coverage above).
+  `codecsThatRoundTrip` say which encodings *can* explain a byte sequence; nothing ranks them
+  or picks one (the reasoning is under Coverage above).
 
 ## Implementation and size
 
@@ -202,11 +240,13 @@ Table layout:
 
 The generated output is about 192 KB of source (`tables.g.dart` 123 KB +
 `tables_big5hkscs.g.dart` 69 KB); each table is decoded lazily on first use, so adopting a
-single encoding only pays for that one.
+single encoding only pays for that one. Decode throughput (AOT, 1 MB corpus, 8 KB chunks) is
+around 96 MB/s for GBK — every table runs through the same `writeCharCode` hot path.
 
 Always run `dart test` after touching the generator: the tests round-trip **every cell**
-(GBK 21,791, GB2312 7,445, GB18030 23,940 double-byte + 39,420 BMP four-byte, Big5 13,752,
-Big5-HKSCS 18,594), which catches a single wrong bit.
+(counted in byte pairs, duplicates included: GBK 21,791, GB2312 7,445, GB18030 23,940
+double-byte + 39,420 BMP four-byte, Big5 13,752, Big5-HKSCS 18,594), which catches a single
+wrong bit.
 
 ## Data sources and license
 

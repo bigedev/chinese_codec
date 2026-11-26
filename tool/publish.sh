@@ -51,9 +51,13 @@ if [ -n "${PUB_HOSTED_URL:-}" ] && [ "${PUB_HOSTED_URL}" != "$PUB_PUBLISH_URL" ]
   echo "   环境里 PUB_HOSTED_URL=${PUB_HOSTED_URL}（镜像，只读），publish 这两步会临时覆盖"
 fi
 
+# 工作区必须干净才能发：pub 只对「已跟踪文件被改动」告警，未跟踪文件（审计脚本、
+# 临时产物）它一个字都不说，却会被打进发布包 —— 归档清单里曾经出现 _audit_*.dart。
+# 所以这里不分改动类型，只要有条目就停，否则「发布成功」里会夹带私货。
 if [ -n "$(git status --porcelain)" ]; then
-  echo '注意：工作区不干净，pub 会给出警告（不影响发布，但建议先提交）'
+  echo '工作区不干净，先提交或清理再发布（未跟踪文件同样会进包）：'
   git status --short
+  exit 1
 fi
 
 # ---------- 代理（默认 7897，连不上就直连） ----------
